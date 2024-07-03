@@ -1,0 +1,239 @@
+---
+title: "Background math"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Background math}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+This vignette provides a crash course on useful topics and code for using occupancy models with Stan in R. 
+The topics may seem a bit disjoint.
+However, the topics are used in the development of occupancy models with Stan.
+
+## Binomial versus Bernoulli and long versus wide data
+
+**Where is this used in occstanhm?** This is used in formatting data with Stan as well as thinking about the use of the binomial function in Stan versus the Bernoulli.
+
+**Key concepts:** An important concept for occupancy modeling is data structure and probability distributions.
+The Bernoulli distribution describes one sampling event (often denoted as $K = 1$).
+For example, we might flip a coin once and record this as a data entry.
+The Bernoulli distribution is a special case of a binomial distribution. 
+The binomial distribution allows us to have multiple sampling events. 
+For example, we might flip a coin 10 times and record the number of heads and tails as their own columns.
+
+For both general data analysis and occupancy modeling, people often use both distributions. 
+When fitting a simple binomial GLM in R, the modeling choice depends upon the structure of the data.
+One may use a Bernoulli style input (a vector of 0s and 1s for `y`) if their data has coefficients for each observation or the data was given in that format.
+One may use a binomial style input if their data has been aggregated or they want to avoid [pseudoreplication](https://doi.org/10.2307/1942661) (e.g., the tank is the level of replication rather than the individual).
+R has two methods for inputting binomial style data.
+First, a matrix of "successes" and "failures" maybe used for `y`.
+Second, a vector of proportions may be used for `y` and a `weight =` option specified that indicates total trials. 
+Closely related to these distributions are the data concepts of ["wide versus long data in R"](http://lmgtfy.com/?q=wide+versus+long+data+r) and "aggregate versus raw data".
+
+During this code example, you will see how to fit a model using three methods as well as how to convert code between wide and long formats. 
+Now, let's examine all three types of data by first simulating data, then changing to wide data, and lastly, fitting three different GLMs in R using `glm()`:
+
+```{r demoGLMinput}
+#| eval: false
+set.seed(1223)
+x_sim <- rep(c(0.25, 0.75), each = 14)
+x <- rep(c("a", "b"), each = 14)
+y <- rbinom(n = length(x_sim), size = 1, prob = x_sim)
+data_long <-
+  data.frame(x = x,
+             y = factor(y, labels = c("fail", "success")))
+
+### cast the data to wide format using tidyverse
+library(tidyverse)
+data_wide <-
+  data_long |>
+  group_by(x, y) |>
+  summarize(N = n()) |>
+  spread(y, N) |>
+  mutate(Total = success + fail,
+         success_proportion = success / (success + fail))
+data_wide
+
+### Compare the three methods for fitting a logistic regression in R
+glm(y ~ x, family = "binomial", data = data_long)
+
+glm(cbind(fail, success) ~ x, family = "binomial", data = data_wide)
+
+glm(success_proportion ~ x, family = "binomial", data = data_wide,
+    weights = Total)
+```
+
+For occupancy models in Stan, we must use the Bernoulli distribution (or Binomial with `K = 1`) for the latent variables because we cannot aggregate the data.
+Specifically, we need details about each replicate at a lower level.
+For example, we cannot aggregate and say that 3 sites had observed occupancy and 2 sites did not.
+Instead, we need a vector of these site-level detection, for example `c(0, 1, 1, 0, 1, 1, 1)`.
+For the lowest level of the occupancy model, people often use a Bernoulli distribution when they do not have coefficients at the observation-level because there are fewer data entries to aggregate over.
+
+## Matrix notation and occupancy models
+
+**Where is this used in occstanhm?** This is used in formatting data predictor matrices for Stan in R.
+
+**Key concepts:** Models in R such as `lm()` and `glm()` allow users to input [formulas](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/formula.html).
+Formulas allow users to input factors and have R convert them to a matrix of dummy variables. 
+[`model.matrix()`](http://stat.ethz.ch/R-manual/R-devel/library/stats/html/model.matrix.html) allows us to create these matrices of input variables. 
+There are several benefits to using `model.matrix()` to pre-process inputs for Stan.
+First, it allows us to easily turn factors into [dummy variables](https://en.wikipedia.org/wiki/Dummy_variable_(statistics)).
+Second, it allows us to easily have matrices of predictors, which in turn allows us to use matrix algebra within Stan. 
+This section introduces `model.matrix()` so that it will be familiar to us later. 
+
+**Note:** These examples use shorter matrices than most real applications to save screen space and because they are simply part of a demonstration.
+ 
+ 
+### model.matrix basis 
+
+`model.matrix()` uses the `~` (shift-\` on US keyboards) for its input.
+In statistical English, this could be read as "predicted by", for example `y ~ x` could be spoken or read as "y predicted by x."
+The following example demonstrates how it may be used on a simple factor `data.frame`:
+
+
+```{r demoMM}
+#| eval: true
+df <- data.frame(city = c("La Crosse", "St. Louis", "Cairo"))
+model.matrix(~ city, data = df)
+```
+
+Things to notice about `model.matrix()`:
+
+1.  `model.matrix()` converted city to an alphabetical order factor.
+2.  The first factor is the first in alphabetically. This order may be [changing the factor order in R](http://lmgtfy.com/?q=change+r+factor+order).
+3.  The first factor become a global intercept and the other two levels are compared to this. In the next section, we'll see how to change this.
+
+### Intercept for each level 
+
+If we want an intercept for each factor level, we use a `- 1` in the notation.
+```{r demoMMm1}
+df <- data.frame(city = c("La Crosse", "St. Louis", "Cairo"))
+model.matrix(~ city - 1, data = df)
+```
+
+If we have multiple factors, we can only estimate intercepts for all of one of the factors. 
+For example, if we have months and city, we would need a reference month _or_ reference city. 
+Also, notice how order matters.
+Most advanced books on regression analysis explain this in greater detail (e.g., [Harrell](https://hbiostat.org/doc/rms/#content) or [Gelman and Hill 2007](http://www.stat.columbia.edu/~gelman/arm/)). 
+
+```{r demoMMm1b}
+df <- expand.grid(city = c("La Crosse", "St. Louis", "Cairo"),
+                  month = c("May", "June"))
+model.matrix(~ city + month - 1, data = df)
+model.matrix(~ month + city - 1, data = df)
+
+```
+
+### Numeric vs factors
+
+We can also use numeric inputs with `model.matrix()`.
+For example, if we input month as a numeric vector, R creates a matrix with month as a numeric column.
+If we were using the matrix in a regression, this new column would correspond to a slope estimate. 
+```{r factorMatrix, eval = TRUE}
+df1 <- expand.grid(month = c(5, 6, 7))
+model.matrix(~ month, data = df1)
+```
+
+Conversely, if we input month as a factor, we get similar results as before.
+```{r numericMatrix}
+df2 <- expand.grid(month = factor(c(5, 6, 7)))
+model.matrix(~ month, data = df2)
+```
+
+The purpose of this example is to demonstrate how R can sometimes produce unexpected results, especially if we want a measure of time to correspond to an intercept estimate rather than a slope estimate. 
+
+### Subtract 1 from as.numeric()
+
+Closely related to the above point is a problem I have run into when creating binary response variables in R for use with Stan.
+For example, let's say we want to model occupancy for a lake and a river:
+
+```{r m1, eval= TRUE}
+set.seed(12351513)
+df_occ <-
+  data.frame(occ = factor(sample(rep(c("yes", "no"), each = 10))),
+             site = factor(rep(c("lake", "river"), each = 10)))
+```
+
+Using Base R, we could just run `glm()` on this data:
+
+```{r m1glm, eval = TRUE}
+summary(glm(occ ~ site, data = df_occ, family = "binomial"))
+```
+
+But, look at what happens if we try and convert `occ` to a binary response:
+
+```{r m1mm}
+### baseline
+as.numeric(factor(df_occ$occ))
+
+### need -1 to create a vector of zeros and ones
+as.numeric(factor(df_occ$occ)) - 1
+```
+
+## Review of log rules and probability 
+
+**Where is this used in occstanhm?** This is with Stan code, especially when modeling the discrete latent states in occupancy models.
+The log-rules also allow the `reduce_sum()` function in Stan to run a single chain on multiple CPUs on a computer.
+
+**Key concepts:** Stan requires marginalizing out discrete latent variables. 
+This requires working with probabilities, the logit scale, and log-likelihoods.  
+Probabilities are often log transformed to increase numerical stability (or, informally: make the equations easier for the computer to solve) AND to change from multiplication to addition. 
+Here are some quick refreshers of log rules:
+
+- ${log_{10}}(xy) = {log_{10}}(x) + {log_{10}}(y)$
+- ${log_{10}}(1) = 0$
+
+
+For example, let's say we flip a coin once.
+The coin has probability $p$ of heads and probability $1-p$ of tails.
+We get a heads, which we call 1.
+If we flip the coin 4 times, our outcome could be 1001.
+The probability of this occurring would be: $p(1-p)(1-p)p$.
+The product may be denoted using the product operator $\prod$ (much like $\sum$ is used for summation) and generalized.
+We have $N$ trials and we index over $i$.
+Trials with heads are considered _successes_, which is denoted with a superscript $s$ = 1.
+Trials with tails have $s = 0$.
+These superscripts make the terms either be themselves (e.g., $p^1 = p$) or 1 (e.g., $p^0 = 1$).
+We can write the probability of the event occurring as $P(Y|p)$, which is read as the probability of observing $Y$ given probability $p$.
+This leads to the formulation:
+
+$$P(Y|p) =  \prod_{i = 1}^N p^{s_i} (1-p)^{1-s_i}.$$
+
+Taking the log of this gives 
+
+$${log_{10}}(P(Y|p)) =  \sum_{i = 1}^N log_{10}(p^{s_i}) + \log_{10}( (1-p)^{1-s_i}).$$
+
+Two key takeaways. 
+First, notice how the product now became a summation. 
+Second, $x \times 1 = x$ and now $x + {log_{10}(1)} = x + 0 = x$
+
+MacKenzie et al. (2017) covers these calculations for occupancy models in chapter 4 of their book, *Occupancy Estimation and Modeling: Inferring Patterns and Dynamics of Species Occurrence*. 
+
+## Matrix multiplication of two matricies
+
+**Where is this used in occstanhm?** Several parts of Stan code, such as prediction matrices, use matrix multiplication.
+I (RAE) specifically wrote this section while debugging the hyperparameter matrices, but the rules help to understand other code as well.
+I (RAE) also get tripped on on this so it helps me to have this written down in one locaiton.
+
+**Key concepts:**  Matrix multiplication differs from scalar (or "normal") multiplication.
+Consider matrix $A$, with $m$ rows and $n$ columns, and a second matrix $B$, with $n$ rows and $p$ columns.
+Using matrix multiplication, their product, $C$ has $m$ rows by $p$ columns.
+Or, using subscripts of (rows, columns):
+
+$$C_{m,p} = A_{m,n} B_{n,p}$$
+
+## References
+
+Gelman, A., & Hill, J. (2007). Data Analysis Using Regression and Multilevel/Hierarchical Models (Analytical Methods for Social Research). Cambridge: Cambridge University Press. [doi:10.1017/CBO9780511790942](doi:10.1017/CBO9780511790942)
+
+MacKenzie, D. I., Nichols, J. D., Royle, J. A., Pollock, K. H., Bailey, L., & Hines, J. E. (2017). Occupancy estimation and modeling: inferring patterns and dynamics of species occurrence. Elsevier.
+

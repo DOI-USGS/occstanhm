@@ -1,0 +1,546 @@
+---
+title: "Occupancy model formulations"
+author: "Richard A. Erickson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Occupancy model formulations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+bibliography: '`r system.file("extdata", "references.bib", package = "occstanhm")`'
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Mathematical formulation of occupancy model
+
+Our derivation of multispecies occupancy models bridges statistical hierarchical models such as those covered in @gelman2006data with the biological hierarchy described by @royle2008hierarchical.
+We directly expand upon @Tobler_2019 because we directly estimate correlation without latent variables.
+We also expand upon  @Tobler_2019 to include not only correlated site-level occupancy, but also correlated detection probabilities.
+Specifically, hierarchical models usually estimate correlations among hierarchical coefficients (often called _random-effects_ in ecology) that are usually treated as a nuisance parameter [@gelman2006data].
+We show how this correlation may be used in an occupancy model to estimate correlations for species occupancy and detection across locations.
+Thus, the nuisance parameter becomes a biologically meaningful and important parameter.
+
+We also extend these models to include sub-sampling and thus a third-level, following @Dorazio_2017 and their application to environmental DNA (eDNA).
+More specifically, we were motivated by our example applications to real world situations where we have had to use occupancy models for our ongoing works.
+Example three-level motivations include an eDNA monitoring program, where multiple sites may be visited and sampled.
+Example applications could include an ongoing monitoring program looking for two species of invasive carp and community analysis.
+An example two-level motivation would be metabarcoding-based studies used for monitoring programs for community ecology sampling.
+Lastly, our approach scales with additional computing resources, something made possible through recent advances with tools such as the Stan language that allow for within chain parallel computing for Hamiltonian Monte Carlo (HMC).
+
+Here, we merge together biology and statistical hierarchies with occupancy models by deriving the models statistically to show our thought process and extension of existing models.
+
+# Deriviation of models
+
+We present our conceptual framework for thinking about occupancy models in this section.
+We start with a logistic regression and assume perfect detection as a simplifying assumption.
+We also only include a single-species.
+Following these example, the model expands to include multiple species and imperfect detection.
+
+## Perfect detection models
+
+To start, consider surveying for a single species.
+A survey occurs for the species at one site, with multiple visits.
+The probability the species occupies the site may be depicted with $\psi$ and the observed presences (or "detection", $z=1$) or observed absences (or "non-detection", $z = 0$) during visits recorded in a in vector $\textbf{z}$.
+A Bernoulli distribution connects $\psi$ and the observed data:
+  
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{Bernoulli}(\psi).
+\end{align}
+```
+
+In turn, this may be modeled with a with binomial regression.
+We use a logit scale (and hence a logistic regression), although another common choice would be the probit scale [such as @Dorazio_2017].
+Both link functions are similar, although the logit has slightly wider tails to the distribution [@finney1952probit], and works more efficiently with Stan (the Bayesian language used to build the model) due to built in and optimized functions.
+Additionally, the logit-scale produces log-odds and has slightly easier to understand coefficients.
+Thus, we end up with a simple logistic regression:
+
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{Binomial}(\psi), \textrm{where} \nonumber \\
+\textrm{logit}(\psi) &= \mu_\beta
+\end{align}
+```
+
+The intercept, $\mu_\beta$, exists on the logit scale that ranges from $-\infty~\textrm{to}~\infty$.
+Converting this to a probability (such as using the `plgogis()` function in R) produces the probability a species occurs a location.
+For example, if $\mu_\beta = 1$, then the probability a species occupies a site is $0.5$. 
+The logit scale is used for numerical stability and because it has log-scale properties and is additive, rather than multiplicative (like the probability scale), when additional coefficients are included.
+
+For example, coefficients may be used if this model may be extended to two species, such as species $A$ and $B$.
+Each species has it's own regression coefficient, $\beta_{A}$ and $\beta_B$.
+Likewise, an identification predictor vectors $\textbf{x}_A$ and $\textbf{x}_B$ exist for species membership  where a 1 indicates an observation for a species and a 0 indicates the observation does not correspond to a species.
+Community and multispecies ecology commonly uses matrix notation (such as a column for each species; @gotelli2013primerstats), our format uses data with each observation as a row with a column for species membership [sometimes called _long data_, see @JSSv059i10 for additional discussion on _tidy data_].
+This also creates a logistic regression:
+
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{logistic}(\beta_A \textbf{x}_A + \beta_B \textbf{x}_B).
+\end{align}
+```
+
+The regression may be extended to use matrix notation with a vector of coefficients, $\boldsymbol{\beta}$, and design matrix, $\textbf{X}$.
+Using matrix notation allows the model to extend to any arbitrary number of species:
+
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{logistic}(\textbf{X}\boldsymbol{\beta}).
+\end{align}
+```
+
+The model may be further extended to include multiple sites, $j \in 1, 2, \ldots, N_\textrm{sites}$.
+With this notation $\boldsymbol{\beta}$ becomes a matrix with each row of $\boldsymbol{\beta}$ corresponding to a site and each column corresponding to species.
+A grouping vector, $\textbf{jj}$, matches the rows to the sites for the regression.
+This notation is further described in the [Multivariate priors for hierarchical models section of the Stan user manual](https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022].
+Additionally, the `fishstan` R package implemented different version of this model including a logistic regression, linear regression, and different growth models [@fishStan; @erickson2022fishstan] and this package provides a simpler example of this notation compared to a multilevel occupancy model for readers looking for a simpler code example.
+
+Briefly, imagine six observations ($z_1, z_2,\ldots , z_6$) across two sites, Site 1 and Site 2, for three species, Species 1, Species, 2 and Species 3 (and their corresponding coefficients $\beta_1$, $\beta_2$, and $\beta_3$).
+The $\boldsymbol{\beta}$ coefficients are a matrix with each column for a species (3) and each row for a site (2).
+Or, each row may be a vector for each location.
+A matrix $\textbf{X}$ is the design matrix for membership in each species group.
+Writing this out in log form could be (assuming two observations per site):
+
+```{=tex}
+\begin{align}
+\left(
+\begin{matrix}
+z_1 \\
+z_2 \\
+z_3 \\
+z_4 \\
+z_5 \\
+z_6 \\
+\end{matrix}
+\right)
+\sim 
+\textrm{logistic}\left(\textbf{X}
+\left(
+\begin{matrix}
+\beta_{\textrm{site} 1} \\
+\beta_{\textrm{site} 1} \\
+\beta_{\textrm{site} 2} \\
+\beta_{\textrm{site} 2} \\
+\beta_{\textrm{site} 2} \\
+\beta_{\textrm{site} 2} \\
+\end{matrix}
+\right)
+\right)
+\end{align}
+```
+
+This equation may be written using a subscript to "expand" the matrix of $\boldsymbol{\beta}$ vectors into a matrix (for example, $\textbf{jj} = (1, 1, 2, 2, 3, 3)$ with this example):
+
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{logistic}(\textbf{X}\boldsymbol{\beta}_{jj}).
+\end{align}
+```
+
+With this model, the elements of $\beta$ are assumed to come from a multivariate normal distribution: 
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta} & \sim \textrm{multivariate normal}(\textbf{X}^\star \boldsymbol{\beta}^\star, \boldsymbol{\Sigma}).
+\end{align}
+```
+
+People commonly treat the correlation structure of the covariance matrix a nuisance parameters or only something of interest during modeling building and diagnosis.
+However, the correlation matrix, $\boldsymbol{\Omega}$ maybe derived from $\boldsymbol{\Sigma}$ (something shown in [Multivariate priors for hierarchical models section of the Stan user manual]( https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022]).
+Thus, $\boldsymbol{\Omega}$  gives us the correlations of species occupancy probabilities across sites.
+The next sections show how this may be extended to two- and three-level models.
+
+## 2-level multispecies model with definition and notations
+
+We base our formal notation upon @Dorazio_2017 for the occupancy model and [Multivariate priors for hierarchical models section of the Stan user manual]( https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022] for the hierarchical model.
+For readers seeking additional information, textbooks such as @mackenzie2017occupancy include the background and history of these types of model.
+Within this section, we also sometimes include some of our Stan variable names in `code format` because tracking indexing with Stan was a challenge we faced when implementing this model.
+
+Start by considering multiple species and their occupancy probabilities.
+However, imperfect detection occurs and hence an occupancy modeling framework is required.
+Hence, both an occupancy probability $\psi$ and detection probability $p$ exist with the model.
+For both of these parameters, subscripts are needed for locations.
+
+The model has units $i$ that may be a site of interest replicated spatially, temporally, or both where $i \in 1, 2, \ldots N_\textrm{units}$ (in Stan code, this this `n_units`).
+For example, multiple lakes could be visited, the same lake could be visited multiple times, or multiple lakes could be visited multiple times.
+The $i^\textrm{th}$ unit may be occupied ($z_i = 1$) or not occupied ($z_i = 0$) with probability $\psi_i$:
+
+```{=tex}
+\begin{align}
+\boldsymbol{Z} &\sim \textrm{Bernoulli}(\psi).
+\end{align}
+```
+
+Each visit also contains a probability of detection for samples within each visit:
+
+```{=tex}
+\begin{align}
+\boldsymbol{Y} &\sim \textrm{Bernoulli}(p).
+\end{align}
+```
+
+We may expand upon this model to include regression coefficients using the logit scale.
+Thus, we transform the probability scale to the logit scale:
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi) &= \mu_{\psi} ~\textrm{and} \\
+\textrm{logit}(p)  &=  \mu_{p}.
+\end{align}
+```
+
+We can use regressors with the $\mu$ parameters on the logit-scale.
+Specifically, we can use these with predictor matrices $\textbf{X}$ and $\textbf{V}$ as well regression coefficients $\boldsymbol{\beta}$ and $\boldsymbol{\delta}$:
+
+```{=tex}
+\begin{align}
+\mu_{\psi} & \sim \textbf{X} \boldsymbol{\beta}~\textrm{and} \\
+\mu_{p} & \sim \textbf{V} \boldsymbol{\delta}.
+\end{align}
+```
+
+We can assume both $\boldsymbol{\beta}$ and $\boldsymbol{\delta}$ come from a multivariate normal distribution.
+This allows us place the model into a statistical hierarchical model framework.
+We adapt the notation of @Stan_manual_2022 to use use a star symbol ($^\star$) for the second level hierarchy avoid confusion with too many parameters (specifically, the biology hierarchy crossed with the statistical hierarchy).
+Within this framework, $\boldsymbol{\Sigma}$ are correlated error terms:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta}  & \sim \textrm{multivariate normal}(\textbf{X}^\star \boldsymbol{\beta}^\star, \boldsymbol{\Sigma}_{\psi})~\textrm{and} \\
+\boldsymbol{\delta} & \sim \textrm{multivariate normal}(\textbf{V}^\star \boldsymbol{\delta}^\star, \boldsymbol{\Sigma}_{p}).
+\end{align}
+```
+
+[Multivariate priors for hierarchical models section of the Stan user manual]( https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022] includes the derivations of the correlation matrices, $\boldsymbol{\Omega}_\psi$ and $\boldsymbol{\Omega}_p$, which may be derived from the covariance $\boldsymbol{\Sigma}_\psi$ and $\boldsymbol{\Sigma}_p$.
+We simply note these are proportional:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Omega}_{\psi_{i,j}} &\propto \boldsymbol{\Sigma}_{\psi_{i,j}}~\textrm{and} \\
+\boldsymbol{\Omega}_{p_{i,j}} &\propto \boldsymbol{\Sigma}_{p_{i,j}}.
+\end{align}
+```
+
+Our model may be extended change to the logit scale for numerical stability and include regression coefficients:
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi) &= \mu_{\psi}~\textrm{and} \\
+\textrm{logit}(p)  &=  \mu_{p}.
+\end{align}
+```
+
+Within this framework, the sampling unit $j$, which can be repeatedly sampled through time or space, is denoted with with a $j$ where $j \in 1, 2, \ldots N_\textrm{units}$.
+Like the simple example shown previously, an indexing vector, $\textbf{jj}$ is used with loop over vectors, specifically $\textbf{jj}_\psi$ and $\textbf{jj}_p$.
+**Warning:** The $\textbf{jj}$ grouping variables can differ across levels if the different levels of the model have different predictors.
+Thus, we have a matrix of coefficients for sampling units $\boldsymbol{\beta}_\psi$ and $\boldsymbol{\delta}_p$:
+
+```{=tex}
+\begin{align}
+\mu_{\psi_{jj[n]}} & \sim \textbf{X} \boldsymbol{\beta}_{jj[n]}~\textrm{and} \\
+\mu_{p_{jj[n]}} & \sim \textbf{V} \boldsymbol{\delta}_{jj[n]}.
+\end{align}
+```
+
+Priors from a normal distribution are assigned to these parameters to assist in constraining the model as part of the Stan model fit and the equations are coded with standard deviations for $p$ ($\sigma_{p}$) and $\psi$ ($\sigma_{\psi}$):
+
+```{=tex}
+\begin{align}
+\mu_{\psi_{jj[n]}} & \sim \textrm{Normal}(\sim \textbf{X} \boldsymbol{\beta}_{jj[n]}, \sigma_{p}) ~\textrm{and} \\
+\mu_{p_{jj[n]}} & \sim \textrm{Normal}(\sim \textbf{V} \boldsymbol{\delta}_{jj[n]}, \sigma_{psi}).
+\end{align}
+```
+
+Priors are also assigned to the standard deviations to further constrain the model using half-Normal (positive only) distributions:
+
+```{=tex}
+\begin{align}
+ \sigma_{p} & \sim \textrm{half-Normal}(\sigma_{p~\textrm{prior}}, \sigma_{p~\textrm{SD}}) ~\textrm{and} \\
+ \sigma_{\psi} & \sim \textrm{half-Normal}(\sigma_{\psi~\textrm{prior}}, \sigma_{\psi~\textrm{SD} }).
+\end{align}
+```
+
+These coefficients then have their own hierarchy of modeling and hyper-parameters based upon syntax of @[Multivariate priors for hierarchical models section of the Stan user manual]( https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022]:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta}_{j}  & \sim \textrm{multivariate normal}(\boldsymbol{\beta}^\star, \boldsymbol{\Sigma}_{\psi})~\textrm{and}  \\
+\boldsymbol{\delta}_{j} & \sim \textrm{multivariate normal}(\boldsymbol{\delta}^\star, \boldsymbol{\Sigma}_{p}) \\
+\end{align}
+```
+
+The covariance matrices, $\boldsymbol{\Sigma}_\psi$ and $\boldsymbol{\Sigma}_p$ are defined in terms of coefficient scales $\tau_\psi$ and $\tau_p$ and correlation matrices $\boldsymbol{\Omega}_\psi$ and $\boldsymbol{\Omega}_p$.
+The coefficient scales are defined as $\tau_\psi = \sqrt{\boldsymbol{\Sigma}_{\psi_{k,k}}}$ and $\tau_p = \sqrt{\boldsymbol{\Sigma}_{p_{k,k}}}$.
+The correlation matrices are defined as \begin{align}
+\boldsymbol{\Omega}_{\psi_{i,j}} &= \frac{\boldsymbol{\Sigma}_{\psi_{i,j}}}{\tau_{\psi_i} \tau_{\psi_j}}~\textrm{and} \\ \boldsymbol{\Omega}_{p_{i,j}} &= \frac{\boldsymbol{\Sigma}_{p_{i,j}}}{\tau_{p_i} \tau_{p_j}}.
+\end{align}
+
+We used @Lewandowski_2009 priors for the for the correlation matrices (LKJCrr) with $\nu_{\psi} > 1$ and $\nu_{p}> 1$:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Sigma}_\psi &\sim \textrm{LKJCrr}(\nu_\psi) ~ \textrm{and} \\
+\boldsymbol{\Sigma}_p &\sim \textrm{LKJCrr}(\nu_p).
+\end{align}
+```
+
+Regarding the indexing, we note some caveats.
+First, the two-levels become confusing, often having the the same groupings by coincidence or special cases.
+This is especially true for $\psi$-level parameters and $p^\star$-level parameters.
+Additionally, it is important to think about groupings.
+We often had trouble with these groupings when we were coding the model and deriving our equations.
+
+The above model assumes correlations among all parameters, however, this is not always important or of interest.
+For example, perhaps one wants to fit a model with slopes and intercepts.
+In this case, the exponential growth of the correlation matrix becomes unwieldy.
+Thus, two or more correlation matrices may be wanted at each level.
+For example, a site-specific "intercept" parameter for base-line occupancy and a site-specific slope parameter.
+This would allow species base-line occupancy and changes to be estimated through time.
+For this notation, one could use forward superscript notation such as $^1\boldsymbol{\Omega}_{p_{i,j}}$ and $^2\boldsymbol{\Omega}_{p_{i,j}}$ for two different correlations.
+
+## Three-level model
+
+The 2-level model described in the previous section may also be extended to a third level that includes sub-sampling. 
+@Mordecai_2011 first presented this type of occupancy model and we base our syntax upon @Dorazio_2017.
+We also refer the reader to @Dorazio_2017 for additional background on these models.
+Generically, the three levels may be thought of like this:
+
+(1) Is a site occupied?
+(2) Did a sample detect or contain the species? and  
+(3) Did sub-sampling detect the species within the sample?  
+
+For example, imagine a forest survey.
+A specific forest might be surveyed and we are interested in the probability of a species occupying a patch in the forest.
+This highest level would the site or unit-level occupancy.
+Next, samples are taken within the forest using different plots (such as plant surveys that are done within the forest).
+These samples are the second-level or sample-level of the model.
+Lastly, within each plot, sub-samples may be used such as square grids where all the plants within a random set of cells are sampled.
+
+However, our specific applications of interest are for eDNA, which as also the motivation for @Dorazio_2017.
+This eDNA-based application has three-levels for an occupancy model (See the figure that follows).
+These correspond to the following:
+
+(1)  With eDNA, a site may or may not have eDNA present (the linkage between eDNA and species being at a site is something readily acknowledged by others, but outside the scope of this current paper, see work such as @balint2018accuracy and @beng2020applications for discussion on this topic). Is eDNA present at a site?  
+(2) At a site, samples are taken and the eDNA extracted (such as a water sample is taken and the filtered or centrifuged to extract the DNA from the water). Did a sample and extraction method capture eDNA?  
+(3) Do the sub-samples that are taken from each sample using the molecular or technical replicate such as quantitative polymerase chain reaction (qPCR) contain eDNA?
+
+```{r, echo = FALSE}
+edna_cap <-
+  paste0("Conceptual illustration of 3 levels including variable names,",
+         "but not subscripts (variables are formally defined in text). ",
+         "The river illustration shows sampling the same site multiple times.",
+         "Each visit either had eDNA detected ($Z = 1$) or not detected ",
+         "($Z = 0$) with probability $\\psi$. ",
+         "The individual samples taken from the river (lower left) ",
+         "illustrate multiple samples being taken at a site during a visit. ",
+         "Samples either had eDNA detected within them ($A = 1$) or not ",
+         "($A = 0$) with probability $\\theta$. ",
+         "Samples processed in the lab (lower right) either had eDNA ",
+         "detections ($Y = 1$) or no detections ($Y = 0$) with ",
+         "probability $p$. ",
+         "The figure originally appeared in Erickson et al. (2019) and ",
+         "was created by Bob Kratt under contract to the USGS.",
+         "\\label{eDNA:three}")
+```
+
+```{r, fig.align = "center", out.width="50%", fig.cap=edna_cap, echo = FALSE}
+knitr::include_graphics(system.file("extdata", "eDNA-tree.png",
+                                    package = "occstanhm"))
+```
+
+Like previous section, we base our formal notation upon @Dorazio_2017 for the occupancy model and [Multivariate priors for hierarchical models section of the Stan user manual]( https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section) [@Stan_manual_2022]; 1.13 for the hierarchical model.
+We also include some of our Stan variable names in `code format` because tracking indexing with Stan was a large challenge we faced when implementing this model.
+The model has units $i$ that may indicate a region of interest spatially, temporally, or both where $i \in 1, 2, \ldots N_\textrm{units}$.
+For example, multiple lakes could be visited, the same lake could be visited multiple times, or multiple lakes could be visited multiple times.
+The $i^\textrm{th}$ unit may be occupied ($Z_i = 1$) or not occupied ($Z_i = 0$) with probability $\psi_i$:
+
+\begin{align}
+Z_i &\sim \textrm{Bernoulli}(\psi_i).
+\end{align}
+
+The $i^\textrm{th}$ unit has $j_i$ samples taken from the site, $j_i \in 1, 2, \ldots N_\textrm{revisits: i}$ (`n_samples[unit index]`).
+A lowercase $z_i$ denotes the realized occupancy ($z_i$ = 1) or non-occupancy ($z_i$ = 0) at a unit (`any_seen[unit index]`).
+
+The latent, sample occurrence $A_{i,j}$ is conditional upon $z_i$ and (denoted with the vertical bar symbol, $|$).
+Lastly, $\theta_{i,j}$ is the sample probability for the $j^\textrm{th}$ sample at the $i^\textrm{th}$ unit:
+
+\begin{align}
+A_{i,j} | z_i &\sim \textrm{Bernoulli}(z_i \theta).
+\end{align}
+
+A lowercase $a_{i,j}$ denotes the realized occupancy ($a_{i,j}$ = 1) or non-occupancy ($a_{i,j}$ = 0) at a sample (`sample_seen[unit index]`)
+Within each sample, there are $k_{i,j}$ sub-samples within the unit, $k_{i,j} \in 1, 2, \ldots N_\textrm{subsamples: i, j}$ (`k_samples`).
+Each unit may have its own revisits and each revisit to a unit may have its own number of subsamples.
+Hence, there are can be subscripted subscripts.
+$k$ may be summed for each unit and then written as a vector, $K$ for all units (`k_samples` that is the same length as the total number of observations in the data frame, $N_\textrm{total}$ or `total_observations`).
+A sampling event may have a detection ($y_{i,j,k} = 1$) or a non-detection ($y_{i,j,k} = 0$).
+
+The observation $Y_{i,j,k}$ is conditional upon $a_{i,j}$ (denoted with the vertical bar symbol, $|$).
+Lastly, $p_{i,j,k}$ is the detection probability for the $k^\textrm{th}$ sub-sample in the $j^\textrm{th}$ sample at the $i^\textrm{th}$ unit:
+
+```{=tex}
+\begin{align}
+Y_{i,j,k} | a_{i,j} &\sim \textrm{Binomial}(k_{j,k}, a_{i,j} p_{i,j,k}).
+\end{align}
+```
+
+We may also expand this model to include regression coefficients on the logit scale, like the two-level model:
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi) &= \mu_{\psi}, \\
+\textrm{logit}(\theta) &= \mu_{\theta},~\textrm{and} \\
+\textrm{logit}(p)  &=  \mu_{p}
+\end{align}
+```
+
+The model includes regressors with the $\mu$ parameters.
+These include predictor matrices $\textbf{X}$, $\textbf{W}$, and $\textbf{V}$ as well a regression coefficients $\beta$, $\alpha$, and $\delta$:
+
+```{=tex}
+\begin{align}
+\mu_{\psi} &= \sim \textrm{Normal{(\textbf{X} \boldsymbol{\beta}, \sigma_{\psi}), \\
+\mu_{\theta} &= \sim \textrm{Normal}(\textbf{W} \boldsymbol{\alpha}, \sigma_{\psi}),~\textrm{and} \\
+\mu_{p} &= \sim \textrm{Normal}(\textbf{V} \boldsymbol{\delta}, \sigma_{\psi})
+\end{align}
+```
+
+We can assume $\boldsymbol{\beta}$, $\boldsymbol{\alpha}$, and $\boldsymbol{\delta}$ come from a multivariate normal distribution to place the model into a hierarchical framework and adapt notation of @Stan_manual_2022 to use use a star symbol ($^\star$) for the second level hierarchy avoid confusion with too many parameters (i.e., the biology hierarchy crossed with the statistical hierarchy):
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta}  & \sim \textrm{multivariate normal}(\textbf{X}^\star \boldsymbol{\beta}^\star, \Sigma_{\psi}), \\
+\boldsymbol{\alpha}  & \sim \textrm{multivariate normal}(\textbf{W}^\star \boldsymbol{\alpha}^\star, \Sigma_{\theta}),~\textrm{and}\\
+\boldsymbol{\delta} & \sim \textrm{multivariate normal}(\textbf{V}^\star \boldsymbol{\delta}^\star, \Sigma_{p})
+\end{align}
+```
+
+Like the two-level model, the $\boldsymbol{\Sigma}$ covariance matrices are proportional to the correlation matrices, $\boldsymbol{\Omega}$:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Omega}_{\psi_{i,j}} &\propto \boldsymbol{\Sigma}_{\psi_{i,j}}, \\
+\boldsymbol{\Omega}_{\theta_{i,j}} &\propto \boldsymbol{\Sigma}_{\theta_{i,j}},~\textrm{and} \\
+\boldsymbol{\Omega}_{p_{i,j}} &\propto \boldsymbol{\Sigma}_{p_{i,j}}.
+\end{align}
+```
+
+We may also change these to the logit scale for numerical stability and include regression coefficients:
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi) &= \mu_{\psi}, \\
+\textrm{logit}(\alpha) &= \mu_{\alpha},~\textrm{and} \\
+\textrm{logit}(p)  &=  \mu_{p}.
+\end{align}
+```
+
+Like the two-level model, grouping parameters are used to map the row vectors for the coefficients to the predictor matrix:
+
+```{=tex}
+\begin{align}
+\mu_{\psi_{jj[n]}} & \sim \textbf{X} \boldsymbol{\beta}_{jj[n]},  \\
+\mu_{\alpha_{jj[n]}} & \sim \textbf{W} \boldsymbol{\alpha}_{jj[n]},~\textrm{and} \\
+\mu_{p_{jj[n]}} & \sim \textbf{V} \boldsymbol{\delta}_{jj[n]}.
+\end{align}
+```
+
+These include priors from a normal distribution that are assigned to these parameters to assist in constraining the model as part of the Stan model fit and the equations are coded with standard deviations for $p$ ($\sigma_{p}$) and $\psi$ ($\sigma_{\psi}$):
+
+```{=tex}
+\begin{align}
+\mu_{\psi_{jj[n]}} & \sim \textrm{Normal}(\sim \textbf{X} \boldsymbol{\beta}_{jj[n]}, \sigma_{\psi}), \\
+\mu_{\theta_{jj[n]}} & \sim \textrm{Normal}(\sim \textbf{W} \boldsymbol{\beta}_{jj[n]}, \sigma_{\theta}),~\textrm{and} \\
+\mu_{p_{jj[n]}} & \sim \textrm{Normal}(\sim \textbf{V} \boldsymbol{\delta}_{jj[n]}, \sigma_{p}).
+\end{align}
+```
+
+Priors are also assigned to the standard deviations to further constrain the model using half-Normal (positive only) distributions:
+
+```{=tex}
+\begin{align}
+\sigma_{p} & \sim \textrm{half-Normal}(\sigma_{p~\textrm{prior}}, \sigma_{p~\textrm{SD}}), \\
+\sigma_{\theta} & \sim \textrm{half-Normal}(\sigma_{\theta~\textrm{prior}}, \sigma_{\theta~\textrm{SD}}), ~\textrm{and} \\
+\sigma_{\psi} & \sim \textrm{half-Normal}(\sigma_{\psi~\textrm{prior}}, \sigma_{\psi~\textrm{SD} }).
+\end{align}
+```
+
+The coefficients then have their own hierarchy of modeling:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta}_{j}  & \sim \textrm{multivariate normal}(\boldsymbol{\beta}^\star, \boldsymbol{\Sigma}_{\psi}), \\
+\boldsymbol{\alpha}_{j}  & \sim \textrm{multivariate normal}(\boldsymbol{\alpha}^\star, \boldsymbol{\Sigma}_{\alpha}),~\textrm{and}\\
+\boldsymbol{\delta}_{j} & \sim \textrm{multivariate normal}(\boldsymbol{\delta}^\star, \boldsymbol{\Sigma}_{p}).
+\end{align}
+```
+
+The covariance matrices, $\boldsymbol{\Sigma}_\psi$, $\boldsymbol{\Sigma}_\theta$, and $\boldsymbol{\Sigma}_p$ are defined in terms of coefficient scales $\tau_\psi$, $\tau_\theta$, and $\tau_p$ and correlation matrices $\boldsymbol{\Omega}_\psi$, $\boldsymbol{\Omega}_\theta$, and $\boldsymbol{\Omega}_p$.
+The coefficient scales are defined as
+$\tau_\psi = \sqrt{\boldsymbol{\Sigma}_{\psi_{k,k}}}$,
+$\tau_\theta = \sqrt{\boldsymbol{\Sigma}_{\theta{k,k}}}$,
+and $\tau_p = \sqrt{\boldsymbol{\Sigma}_{p_{k,k}}}$.
+The correlation matrices are defined as
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Omega}_{\psi_{i,j}} &= \frac{\boldsymbol{\Sigma}_{\psi_{i,j}}}{\tau_{\psi_i} \tau_{\psi_j}}, \\
+\boldsymbol{\Omega}_{\theta{i,j}} &= \frac{\boldsymbol{\Sigma}_{\theta_{i,j}}}{\tau_{\theta_i} \tau_{\theta_i}},~\textrm{and}\\
+\boldsymbol{\Omega}_{p_{i,j}} &= \frac{\boldsymbol{\Sigma}_{p_{i,j}}}{\tau_{p_i} \tau_{p_j}}.
+\end{align}
+```
+
+All three matrices, $\boldsymbol{\beta}^\star$, $\boldsymbol{\alpha}^\star$ and $\boldsymbol{\delta}^\star$, are given weakly-informative priors: 
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta}^\star &\sim \textrm{normal}(0, 2), \\
+\boldsymbol{\alpha}^\star &\sim \textrm{normal}(0, 2), ~\textrm{and} \\
+\boldsymbol{\delta}^\star &\sim \textrm{normal}(0, 2).
+\end{align}
+```
+
+Likewise, the $\tau$ parameters are given a weakly informative prior from the half-Cauchy distribution:
+
+```{=tex}
+\begin{align}
+\tau_\psi &\sim \textrm{Cauchy}(0, 2.5) ~ \textrm{contrained by} ~ \tau_\psi > 0, \\
+\tau_\theta &\sim \textrm{Cauchy}(0, 2.5) ~ \textrm{contrained by} ~ \theta_\psi > 0,~\textrm{and} \\
+\tau_p &\sim \textrm{Cauchy}(0, 2.5) ~ \textrm{contrained by} ~ \tau_p > 0.
+\end{align}
+```
+
+We used Lewandowski, Kurowick, and Joe priors for the for the correlation matrices (LKJCrr) as defined by [@Lewandowski_2009] with $\nu_{\psi} > 1$, $\nu_{\theta} > 1$, and $\nu_{p} > 1$:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Sigma}_\psi & \sim \textrm{LKJCrr}(\nu_\psi), \\
+\boldsymbol{\Sigma}_\theta & \sim \textrm{LKJCrr}(\nu_\theta), ~ \textrm{and} \\
+\boldsymbol{\Sigma}_p & \sim \textrm{LKJCrr}(\nu_p).
+\end{align}
+```
+
+Like the two-level model, indexing can be difficult.
+The $\theta^\star$ and $p^\star$ parameters, often have similar matrices as the $\psi$ predictors.
+Thus, the three-levels become confusing because the different levels of the model often have the same predictor matrices by coincidence or special cases of the model.
+Like the two-level model, thinking about grouping and writing out equations by hand was how we overcame this challenge.
+
+## Regression framework
+
+Our notation places multispecies occupancy modeling into a regression framework.
+This allows for both continuous and discrete predictors to be used at any level of the models.
+Most basically, each species is it's own intercept.
+A design matrix allows for one to include other discrete and continuous predictor variables.
+Likewise, taking this a step further, interactions allow for predictors to be estimated for each species.
+Or, a clever user might "hack" the design matrix to create their predictor variables.
+Likewise, the use of design matrix allows for expanded regression approaches as an additive model using polynomial regression (such as using $x + x^2$ for predictors).
+Placing occupancy models into a regression framework is not new.
+As an example, @royle2008hierarchical focuses on this throughout their book.
+However, our implementation shows how to use multi-speices occupancy models within a regression framework.
+
+# References 

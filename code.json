@@ -1,0 +1,95 @@
+[
+  {
+    "name": "Hierarchical occupancy models with correlated error structure",
+    "organization": "U.S. Geological Survey",
+    "description": "This contains R scripts for a hierarchical occupancy models with correlated error structure written in the Stan language.", 
+    "version": "main",
+    "status": "Development",
+
+    "permissions": {
+      "usageType": "openSource",
+      "licenses": [
+        {
+          "name": "Public Domain, CC0-1.0",
+          "URL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/raw/main/LICENSE.md"
+        }
+      ]
+    },
+
+    "homepageURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm",
+    "downloadURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/archive/main/occstan_hm-main.zip",
+    "disclaimerURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/raw/main/DISCLAIMER.md",
+    "repositoryURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm.git",
+    "vcs": "git",
+
+    "laborHours": 1000,
+
+    "tags": [
+      "occupancy model",
+      "Bayesian statistis",
+      "regresion",
+      "multi-level models"
+    ],
+
+    "languages": [
+	"R",
+	"Stan"
+    ],
+
+    "contact": {
+      "name": "Richard A. Erickson",
+      "email": "rerickson@usgs.gov"
+    },
+
+    "date": {
+      "metadataLastUpdated": "2023-08-17"
+    }
+  },
+    {
+    "name": "Hierarchical occupancy models with correlated error structure",
+    "organization": "U.S. Geological Survey",
+    "description": "This contains R scripts for a hierarchical occupancy models with correlated error structure written in the Stan language.", 
+    "version": "v1.0",
+    "status": "Production",
+
+    "permissions": {
+      "usageType": "openSource",
+      "licenses": [
+        {
+          "name": "Public Domain, CC0-1.0",
+          "URL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/raw/v1.0/LICENSE.md"
+        }
+      ]
+    },
+
+    "homepageURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm",
+    "downloadURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/archive/v1.0/occstan_hm-v1.0.zip",
+    "disclaimerURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm/-/raw/v1.0/DISCLAIMER.md",
+    "repositoryURL": "https://code.usgs.gov/umesc/quant-ecology/occstan_hm.git",
+    "vcs": "git",
+
+    "laborHours": 1000,
+
+    "tags": [
+      "occupancy model",
+      "Bayesian statistis",
+      "regresion",
+      "multi-level models"
+    ],
+
+    "languages": [
+	"R",
+	"Stan"
+    ],
+
+    "contact": {
+      "name": "Richard A. Erickson",
+      "email": "rerickson@usgs.gov"
+    },
+
+    "date": {
+      "metadataLastUpdated": "2023-08-17"
+    }
+  }
+]
+

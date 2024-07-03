@@ -1,0 +1,28 @@
+# ignore *everything*
+*
+!/**/
+# and then this 'unignores' anything with an extension
+!*.*
+# now, the rest of your gitignore should appear after the above
+# on windows Stan executables end in .exe
+*.exe
+# Ignore temporary files created as part of compilation.
+*.hpp
+*.o
+
+*~
+*.rds
+*.csv
+*.jpg
+*.tar.gz
+*.RData
+*.Rhistory
+*.pdf
+.Rproj.user
+*.Rproj
+*.cer
+*.crt
+.bash_history
+*.html
+.config/
+.local/

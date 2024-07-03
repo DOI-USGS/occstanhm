@@ -1,0 +1,96 @@
+---
+title: "Comparison to Tobler et al. (2019)"
+author: "Richara A. Erickson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+This vignette compares the `occstanhm_2_fast` model to the Latent Variable model in Tobler et al. (2019; https://doi.org/10.1002/ecy.2754).
+The Tobler et al. (2019; https://doi.org/10.1002/ecy.2754) code is not run and requires JAGS and supporting packages to be installed.
+
+This example model also shows how to add non-hierarchical coefficients to a model in Stan.
+
+```{r, echo=FALSE}
+system.file("./compare_Tobler/compare_and_save.R", package = "occstanhm") |>
+  knitr::read_chunk()
+```
+
+```{r}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+## Simulate  data
+
+First, the package are loaded:
+
+```{r used_packages}
+```
+
+Second, the Stan model settings are set:
+
+```{r run_stan_model}
+```
+
+Next, the data is simulated and formatted for Stan:
+
+```{r simulate_data}
+```
+
+The predictors for Stan may be checked for the $\psi$-level of the model:
+
+```{r check_psi}
+```
+
+The detection (_p_) level inputs may also be formulated and checked:
+
+```{r p_coef}
+```
+
+## Run occstanhm model
+
+Now, the data may be formatted for Stan:
+
+```{r save_as_stan}
+```
+
+Then, the model run in Stan:
+
+```{r stan_run}
+```
+
+The summary may also be examined:
+
+```{r fit_summary}
+```
+
+## Run Tobler mdoel
+
+The data needs to be reformatted for the Tolber model:
+
+```{r setup_tobler}
+```
+
+And then the Tobler et al. model run and post-processing done for both outputs:
+
+```{r run_tobler}
+```
+
+## Lastly, the outputs may be compared and saved
+
+```{r compare_outputs}
+```
+
+
+
+```

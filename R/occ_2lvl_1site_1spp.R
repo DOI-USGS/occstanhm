@@ -1,0 +1,111 @@
+#' psi- and theta-only model
+#'
+#' This model primarily exists to demonstrate how the occupancy models are
+#' constructed. The model estimates a site-level occupancy probability, psi, and
+#' a single sample-level capture probability, theta. Both are estimated on the
+#' logit scale with the output logit_psi.
+#'
+#' More practically, one would use a logistic regression for one level of the
+#' model. This model is included to show the derivation of the model.
+#'
+#' @param stan_data Data formatted for Stan.
+#' @return fit Model fit from cmdstanr.
+#'
+#' @export
+#' @examples
+#' # Increase the number of chains to 4
+#' # Increase the number of parallel chains and threads based upon your CPUs
+#' # For example, an 8 CPU machine might do 4 chains on 2 threads
+#' # or 2 chains on 2 threads that are run back-to-back.
+#' # Likewise, the number of warmup and samples to 100s for debugging and
+#' # 1,000s or 10,000 for actual mode fits.
+#' \dontrun{
+#' library(tidyverse)
+#' psi <- 0.75
+#' n_revisits <- 30
+#' n_samples <- rpois(n_revisits, lambda = 10) + 1L
+#' # +1 is to ensure at least 1 sample
+#' n_samples
+#' theta_sim <- 0.6
+#' dat <-
+#'   tibble(unit = "one",
+#'          revisit = seq(1, n_revisits),
+#'          z = rbinom(n = n_revisits, size = 1, prob = psi)) |>
+#'   full_join(tibble(unit = "one",
+#'                    revisit = rep(seq(1, n_revisits), times = n_samples),
+#'                    theta =  theta_sim),
+#'             by = c("unit", "revisit")) |>
+#'   mutate(a = z * rbinom(n(), 1, theta)) |>
+#'   group_by(unit, revisit) |>
+#'   mutate(z_obs = ifelse(sum(a) > 0, 1, 0)) |>
+#'   ungroup() |>
+#'   rowid_to_column("index")
+#' dat
+#' sample_summary <-
+#'   dat |>
+#'   group_by(unit, revisit) |>
+#'   summarize(n_samples_per_revisit = n(),
+#'             theta_obs = mean(a),
+#'             z_obs = ifelse(sum(a) > 0, 1, 0),
+#'             unit_start = min(dplyr::cur_group_rows()),
+#'             unit_stop = max(dplyr::cur_group_rows()),
+#'             .groups = "drop")
+#'
+#' stan_data <-
+#'   list(a = dat |> pull(a),
+#'        z_obs = sample_summary |> pull(z_obs),
+#'        n_revisits = sample_summary |> nrow(),
+#'        n_samples_per_revisit = sample_summary |> pull(n_samples_per_revisit),
+#'        unit_start = sample_summary |> pull(unit_start),
+#'        unit_stop = sample_summary |> pull(unit_stop),
+#'        n_total_samples = dat |> nrow())
+#'
+#' n_chains <- 4
+#' n_parallel_chains <- 4
+#' n_threads_per_chain <- 4
+#' n_refresh <- 100
+#' n_warmup <- 2000
+#' n_sample <- 2000
+#'
+#' fit <- occ_2lvl_1site_1spp(stan_data = stan_data,
+#'                          n_chains = n_chains,
+#'                          n_parallel_chains = n_parallel_chains,
+#'                          n_threads_per_chain = n_threads_per_chain,
+#'                          n_refresh = n_refresh,
+#'                          n_warmup = n_warmup,
+#'                          n_sample = n_sample)
+#'
+#' fit
+#'
+#' dat |> filter(z_obs > 0) |> summarize(mean_a = mean(a)) |> pull(mean_a) |>
+#'   qlogis()
+#'
+#' sample_summary |>
+#'   summarize(obs_psi = mean(z_obs)) |>
+#'   mutate(logit_psi = qlogis(obs_psi))
+#'}
+occ_2lvl_1site_1spp <-
+  function(stan_data,
+           n_chains = 2,
+           n_parallel_chains = 2,
+           n_threads_per_chain = 4,
+           n_refresh = 100,
+           n_warmup = 200,
+           n_sample = 200,
+           ...) {
+
+    stan_file <- system.file("./stan_models/tutorial/occ_2lvl_1site_1spp.stan",
+                             package = "occstanhm")
+
+    mod <- cmdstanr::cmdstan_model(stan_file,
+                                   cpp_options = list(stan_threads = TRUE))
+    fit <- mod$sample(stan_data,
+                      chains = n_chains,
+                      parallel_chains = n_parallel_chains,
+                      threads_per_chain = n_threads_per_chain,
+                      refresh = n_refresh,
+                      iter_warmup = n_warmup,
+                      iter_sampling = n_sample,
+                      ...)
+    return(fit)
+  }

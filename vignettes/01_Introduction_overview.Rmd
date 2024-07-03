@@ -1,0 +1,80 @@
+---
+title: "Vignette introduction and overview"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette introuction and overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+**Warning:** Running the individual vignettes for the first time will take several minutes for the different models to compile with Stan.
+
+The main functions of `occstanhm` are `occstanhm_2` and `occstanhm_3`.
+The purpose of these vignettes are to walk through the derivation of the different models showing how they build from simple to complex.
+These also serve as an introduction to occupancy modeling with Stan.
+In approximate order of complexity (and suggested reading order) the vignettes are as follows:
+
+0. `02_background_topics` that including matrix and formula notation in R and log rules.
+ 
+1. `03_single_species_and_site` that presents single species and single site models:  
+
+    - `occ_1lvl_1site_1spp()`
+    - `occ_2lvl_1site_1spp()`
+    - `occ_3lvl_1site_1spp()`
+
+2. `04_single_speices_multiple_site_models` that presents single species, multiple site models:  
+  
+    - `occ_1lvl_multisite_1spp()`
+    - `occ_2lvl_multisite_1spp()`
+
+
+3. `05_multispecies_models` that presents multispecies models (all multisite models in this package are multiple species):  
+
+    - `occ_1lvl_multispp()`
+    - `occ_2lvl_multispp()`
+    - `occ_3lvl_multispp()`
+
+4. `06_correlated_error_structure` Multispecies models with correlated structure:
+
+    - `occ_2lvl_multispp_corr()`
+    - `occ_3lvl_multispp_corr()`
+
+5. (no vignette but see the help file `?occstanhm_dev_3`) A intermediate model without complete indexing (included because it is useful for understanding the model without worrying about indexing, the model is conceptually useful when learning about occupancy models with Stan, but of limited helpfulness for actual application):
+
+  - `occstanhm_dev_3()`
+
+6. The complete, signature models with different predictors at $\psi$, $\theta$ and $p$ levels:
+
+    - `07_model_math` contains the math for the main models.
+    - `08_occstanhm_2` contains the `occstanhm_2` model
+    - `09_occstanhm_3` contains the  `occstanhm_3` model
+
+7. The package also contains a stripped down and optimized version of `occstanhm_2`, that was created to be compared to Tolber et al. (2019;  https://doi.org/10.1002/ecy.2754). This model runs about 4 $\times$ quicker than the  primary version, but is still slower than Tobler's approximation method. See the help file for this model `?occstanhm_2` to see an example.
+
+  - `occstanhm_2_fast`
+
+The examples start by simulating data before fitting the model.
+The examples include a brief summary of the output and comparison to the _known_ values from the simulated data as well as the simulation inputs.
+These examples allow one to see if the models produce reasonable results.
+The example models focus on estimating a single value per species and site because the indexing and slicing for these "groupings" were difficult in Stan.
+
+**Warning:** Because grouping or slicing in Stan is hard, the simple models assume a single probability for each "group" (location and species combination).
+The simpler models with prediction matrices also use simpler dimensions and assume one coefficient per grouping.
+These sharing of coefficients reflect simple cases and coincidences of object dimensions (that is, column and rows).
+The more complex models relax these assumptions.
+
+As a programming note, the more complex models start to use (and reuse) helper functions.
+These functions exist in a different file so that they may be reused across models.
+The models do not share coefficients across units or sites because they are simple models.
+Most of the models also allow for both among chain parallelization and within chain parallelization using `cmdstanr`.
+`n_refresh` is set to zero for the vignette so that the display is less cluttered.
+You'll want to set to this to `100` (the Stan default) or similar value to see output progress as you use these models.

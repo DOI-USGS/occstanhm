@@ -1,0 +1,809 @@
+---
+title: "Correlated error structure models"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Correlated error structure models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r}
+#| eval: true
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+library(occstanhm)
+library(tidyverse)
+```
+
+The models in this vignette include a correlated error structure for species across locations.
+
+**Warning:** The examples in this vignette are designed to show increasing levels of computational complexity.
+The models do not include generalized coefficients, and, in fact all coefficients are coded to match the number of units and species.
+The generalized versions of these models allow for greater flexibility.
+These models are included in the package as learning artifacts more so than production models.
+One advantage of these example's lack of generalization is a quicker model because the `logit_` parameters are the same length as the number of unit-species combinations whereas the generalized model's parameter are the same length as the number of total observations. 
+This compromise shows the trade offs of "hard coding" models for custom applications compared to generalized versions with respect to application to new problems versus performance speed.
+
+## 1-level model
+
+A one-level model is not included in this package.
+An example appears in the `fishStan` package with the hierarchical logistic regression (Erickson et al. 2020; 2022).
+
+
+## 2-level model
+
+This is a two-level model that estimates an intercept for each species at each location for both site occupancy ($\psi$) and site detection ($\theta$).
+Specifically, the model estimates multiple $\psi$ values for multiple species, $\psi_{j,s}$ (`psi`, or `logit_psi` on the logit scale in Stan) and multiple $\theta$ values for multiple species $\theta_{j,s}$ (`theta`, or `logit_theta` on the logit scale in Stan) from  $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`), and $N_\textrm{species}$ different species (`n_species`).
+The indices are combined in Stan as well to be $N_\textrm{units, species}$.
+This indexing is needed because of how Stan vectorizes and slices data.
+Each unit-species combination may have a unique number of revisits that are stored in the vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`:
+
+```{=tex}
+\begin{align}
+Z_{i,~j,~s} &\sim \textrm{Bernoulli}(\textrm{logit}(\psi_{j, s})),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j},~j\in N_\textrm{number units},~\textrm{and}~s \in N_\textrm{species},~\textrm{and} \\
+A_{i,~j,~k~s}|z_{i,~j,~s} &\sim \textrm{Bernoulli}(\textrm{logit}(z_{i,~j,~s}\theta_{j, s}))~\textrm{where}~k \in N_{\textrm{samples per revisit}}.
+\end{align}
+```
+
+The model includes a predictor matrix for $\textrm{logit}(\psi_{j, s})$ (`logit_psi`) of coefficients $\boldsymbol{\beta}$.
+The model includes a predictor matrix for $\textrm{logit}(\theta_{j, s})$ (`logit_theta`) of coefficients $\boldsymbol{\alpha}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\alpha}$ and each species is a column in $\boldsymbol{\alpha}$.
+A vector of length $N_{\textrm{unit, species}, jj_\psi}$, expands $\boldsymbol{\beta}$ to match the vector $\textrm{logit}(\psi_{j, s})$.
+A vector of length $N_{\textrm{total observations}, jj_\textrm{p}}$, expands $\delta$ to match the vector $\textrm{logit}(\theta_{j, s})$.
+Lastly, a predictor matrices includes binary membership coding for each species, $\textbf{X}$ and $\textbf{W}$, at the two levels:
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi_{j, s}) &= \textbf{X} \boldsymbol{\beta}[jj_\psi]~\textrm{and}\\
+\textrm{logit}(\theta_{j, s}) &= \textbf{W} \boldsymbol{\alpha}[jj_\theta].
+\end{align}
+```
+
+These two parameters are assigned priors, $\sigma$ so that
+
+```{=tex}
+\begin{align}
+\textrm{logit}(\psi_{j, s}) &\sim \textrm{Normal}(\textbf{X} \boldsymbol{\beta}[jj_\psi], \sigma_\psi)~\textrm{and}\\
+\textrm{logit}(\theta_{j, s}) &\sim \textrm{Normal}(\textbf{W} \boldsymbol{\alpha}[jj_\theta], \sigma_\theta).
+\end{align}
+```
+
+Each prior is also assigned its own prior as well to help with numerical convergence:
+
+```{=tex}
+\begin{align}
+\sigma_\psi &\sim \textrm{Half-normal}(0, \sigma_{\psi~\textrm{prior}})~\textrm{and} \\
+\sigma_\theta &\sim \textrm{Half-normal}(0, \sigma_{\theta~\textrm{prior}}).
+\end{align}
+```
+
+The coefficients from each site are drawn from a multivariate distribution with a mean vector and covariance matrix with its own predictors:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\beta} &\sim \textrm{multivariate normal}(\textbf{X}^\star \boldsymbol{\beta}^\star, \boldsymbol{\Sigma}^\psi),~\textrm{and} \\
+\boldsymbol{\alpha} &\sim \textrm{multivariate normal}(\textbf{W}^\star \boldsymbol{\alpha}^\star, \boldsymbol{\Sigma}^\theta). \\
+\end{align}
+```
+
+The variance/covariance matrices are proportional to the correlation matrices among coefficients (in this case, the species-specific occupancy probabilities) $\boldsymbol{\Omega}$ so that:
+
+```{=tex}
+\begin{align}
+\boldsymbol{\Sigma}^\psi &\propto \boldsymbol{\Omega}^\psi~\textrm{and}\\
+\boldsymbol{\Sigma}^\theta &\propto \boldsymbol{\Omega}^\theta.\\
+\end{align}
+```
+
+The derivation and numerical implantation of this relationship are presented in[\S1.13 of the Stan User Guide](https://mc-stan.org/docs/stan-users-guide/regression.html#multivariate-hierarchical-priors.section).
+This model may be implemented in Stan.
+The model requires a custom Cholesky factor function (located in the `scale_cholesky_factor.stan` file) because the the default [Stan method does not scale well past 5-10 coefficients](https://discourse.mc-stan.org/t/nan-results-with-lkj-corr-cholesky/16832), and, instead requires the [onion method](https://discourse.mc-stan.org/t/using-the-onion-method-in-occupancy-model-hierarchical-model/24901).
+
+The model inputs are as follows:
+
+* the model requires the number of unit-species combinations (`n_unit_species`)
+* the total number of samples (`n_total_samples`),
+* the number of units (`n_units`; **WARNING**: this is included as part of a simplifying assumption about input and predictor dimensions and more complex models do not require this parameter),
+* a vector with the number of revisits per unit species combination (`n_revisits_per_unit_species`),
+* the total number of all revisit species combinations (`n_total_revisits_species`),
+* a vector with the number of samples for each revisit species combination (`n_samples_per_revisit_species`),
+* a vector with the binary observation or nonobservation of a species at a revisit (`z_obs`),
+* and a vector with the binary detection or nondetection within a sample (`a`).
+* The model also requires double indexing (that is, indexing within indexing due to Stan's challenging syntax as a language that does not easily handle discrete latent variables and also the use of the `reduce_sum()` function):
+
+  - a indexing vector for the start (`unit_species_revisit_start`) and stop (`unit_species_revisit_stop`) of unit species combinations at the revisit level data (such as `z_obs`),
+  - an indexing for the start (`unit_species_dat_start`) and stop (`unit_species_dat_stop`) of unit species combinations at the data level (such as `a`), and
+  - an indexing of the start (`revisit_start_in_unit`) and stop (`revisit_stop_in_unit`) of each revisit within a unit. The double indexing uses one index to subset within another index as part of the code.
+
+* the number of columns in $\beta$ (`m_beta`) and $\alpha$ (`m_alpha`; **NOTE:** The generalized version of the model include row vectors, but this model uses other variables like `n_units`)
+* an expansion vector for $\psi$-level predictors (`jj_psi`)
+* a predictor matrix $\textbf{X}$ for the $\psi$-level (`x_psi`; **NOTE::** many computer variables in the model use longer names to make them easier to read and find using tools like "find-and-replace" like this variable name)
+* a hyperparameter column number, `m_beta_star`
+* a hyperparameter predictor matrix $\textbf{X}^\star$ (`x_psi_star`)
+* an expansion vector for $\theta$-level predictors (`jj_theta`)
+* a predictor matrix $\textbf{W}$ for the $\theta$-level (`w_theta`)
+* a hyperparameter column number, `m_alpha_star`
+* a hyperparameter predictor matrix $\textbf{W}^\star$ (`w_theta_star`)
+* a prior matrix, `beta_psi_star_prior`
+* a prior `beta_psi_star_sd_prior`
+* a prior for the Cholesky matrix `eta_psi`
+* a prior matrix `alpha_theta_star_prior`
+* a prior `alpha_theta_star_sd_prior`
+* a prior for the Cholesky matrix `eta_theta`
+* a setting for the `reduce_sum()` function, `grainsize`
+
+The model is then coded with Stan:
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_2lvl_multispp_corr.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+The model may be run in R.
+**Note:** The model and simulated data have been pre-run and included in the package to speed computational time.
+First, the data is simulated:
+
+```{r}
+#| eval: false
+library(occstanhm)
+library(tidyverse)
+
+set.seed(123)
+n_units_sim <- 2 # max is 26 due to number of letters
+n_species_sim <- 4
+
+n_revisits_per_site_in <- rpois(n_units_sim, 30)
+hist(n_revisits_per_site_in)
+
+n_samples_per_revisits <- rpois(sum(n_revisits_per_site_in), 20) + 1L
+hist(n_samples_per_revisits, breaks = seq(0, 50, by = 1))
+
+## species unit
+dat_species <-
+  expand_grid(unit = rep(letters[seq(1, n_units_sim)]),
+              species = paste("species", seq(1, n_species_sim))) |>
+  mutate(psi_vec = rbeta(n(), 3, 3),
+         theta_vec = rbeta(n(), 3, 3))
+
+dat_species |>
+  print(n = Inf)
+
+## unit and revisit data
+dat_revisit <-
+  tibble(unit = rep(letters[seq(1, n_units_sim)],
+                    times = n_revisits_per_site_in)) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(revisit_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup() |>
+  select(unit, revisit_id)
+
+dat_revisit |>
+  print(n = Inf)
+
+# sample
+dat_sample <-
+  tibble(
+    unit = rep(dat_revisit |> pull(unit),
+               times = n_samples_per_revisits),
+    revisit_id = rep(dat_revisit |> pull(revisit_id),
+                     times = n_samples_per_revisits),
+  ) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(sample_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  select(-index) |>
+  ungroup()
+
+# merge together
+dat <-
+  dat_species |>
+  full_join(dat_revisit, by = "unit",
+            relationship = "many-to-many") |>
+  mutate(z = rbinom(n(), 1, psi_vec)) |>
+  full_join(dat_sample, by = c("unit", "revisit_id"),
+            relationship = "many-to-many") |>
+  arrange(unit, species) |>
+  rowid_to_column("index") |>
+  mutate(a = z * rbinom(n(), 1, theta_vec)) |>
+  ungroup() |>
+  group_by(unit, revisit_id, species) |>
+  mutate(z_obs = ifelse(sum(a) > 0, 1, 0)) |>
+  ungroup()
+
+unit_species_summary <-
+  dat |>
+  group_by(unit, species) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_species_dat_start = min(index),
+            unit_species_dat_stop = max(index),
+            n_revisits_per_site = n(),
+            .groups = "keep") |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_species_summary |>
+  print(n = Inf)
+
+revisit_species_summary <-
+  dat |>
+  group_by(unit, species, revisit_id) |>
+  summarize(n_samples_per_revisit = n(),
+            revisit_start = min(index),
+            revisit_stop = max(index),
+            z_obs = mean(z_obs),
+            .groups = "drop") |>
+  group_by(unit, species) |>
+  mutate(revisit_start_in_unit_species = revisit_start -
+           min(revisit_start) + 1L,
+         revisit_stop_in_unit_species = revisit_stop -
+           min(revisit_start) + 1L)
+
+unit_species_revisit_summary <-
+  revisit_species_summary |>
+  rowid_to_column("index") |>
+  group_by(unit, species) |>
+  summarize(unit_species_revisit_start = min(index),
+            unit_species_revisit_stop = max(index),
+            n_revisits_per_unit_species = n(),
+            psi_obs = mean(z_obs),
+            .groups = "drop") |>
+  mutate(unit_id = as.integer(factor(unit)))
+
+```
+
+Then the data is formatted for Stan:
+```{r}
+#| eval: false
+## Setup parameters for model
+
+# psi-level
+x_psi <- model.matrix(~ species - 1, unit_species_summary)
+x_psi |> head()
+x_psi |> dim()
+
+unit_species_summary_hyper <-
+  unit_species_summary |>
+  group_by(unit) |>
+  summarize(n = n(),
+            hyper_psi = mean(psi_obs),
+            hyper_logit = mean(logit_psi))
+
+x_psi_star <-
+  model.matrix(~ 1, unit_species_summary_hyper)
+
+beta_psi_star_prior <-
+  matrix(0,
+         nrow = x_psi_star |> ncol(),
+         ncol = x_psi |> ncol())
+
+# theta-level
+w_theta <- model.matrix(~ species - 1, unit_species_summary)
+w_theta
+w_theta |> head()
+w_theta |> dim()
+
+w_theta_star <-
+  model.matrix(~ 1, unit_species_summary_hyper)
+
+alpha_theta_star_prior <-
+  matrix(0,
+         nrow = w_theta_star |> ncol(),
+         ncol = w_theta |> ncol())
+
+## Save data in list for stan
+stan_data <-
+  # observation and latent observation data
+  list(
+    a = dat |> pull(a),
+    z_obs = revisit_species_summary |> pull(z_obs),
+    # indexing
+    unit_species_dat_start = unit_species_summary |>
+      pull(unit_species_dat_start),
+    unit_species_dat_stop = unit_species_summary |>
+      pull(unit_species_dat_stop),
+    revisit_start_in_unit = revisit_species_summary |>
+      pull(revisit_start_in_unit_species),
+    revisit_stop_in_unit = revisit_species_summary |>
+      pull(revisit_stop_in_unit_species),
+    unit_species_revisit_start = unit_species_revisit_summary |>
+      pull(unit_species_revisit_start),
+    unit_species_revisit_stop = unit_species_revisit_summary |>
+      pull(unit_species_revisit_stop),
+    # all different dimensions, such as "n"
+    n_units = dat |> distinct(unit) |> nrow(),
+    n_units_species = unit_species_summary |> nrow(),
+    n_total_samples = dat |> nrow(),
+    n_revisits_per_unit_species = unit_species_revisit_summary |>
+      pull(n_revisits_per_unit_species),
+    n_samples_per_revisit_species = revisit_species_summary |>
+      pull(n_samples_per_revisit),
+    n_total_revisits_species = revisit_species_summary |> nrow(),
+
+    # psi-level inputs
+    x_psi = x_psi,
+    m_beta = x_psi |> ncol(),
+    x_psi_star = x_psi_star,
+    m_beta_star = x_psi_star |> ncol(),
+    beta_psi_star_prior = beta_psi_star_prior,
+    beta_psi_star_sd_prior = 1,
+    eta_psi = 0.1,
+    jj_psi = unit_species_revisit_summary |> dplyr::pull(unit_id),
+
+    # theta-level inputs
+    w_theta = w_theta,
+    m_alpha = w_theta |> ncol(),
+    w_theta_star = w_theta_star,
+    m_alpha_star = w_theta_star |> ncol(),
+    alpha_theta_star_prior = alpha_theta_star_prior,
+    alpha_theta_star_sd_prior = 1,
+    eta_theta = 0.1,
+    jj_theta = unit_species_revisit_summary |> dplyr::pull(unit_id),
+
+    sigma_theta_prior = 1.0,
+    sigma_theta_prior_sd = 0.1,
+
+    sigma_psi_prior = 1.0,
+    sigma_psi_prior_sd = 0.1,
+
+    # reduce_sum setting
+    grainsize = 1
+  )
+
+```
+
+The model may then be fit and the summary calculated:
+```{r}
+#| eval: false
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 3000
+n_sample <- 3000
+
+fit <- occ_2lvl_multispp_corr(stan_data,
+                              n_chains = n_chains,
+                              n_parallel_chains = n_parallel_chains,
+                              n_threads_per_chain = n_threads_per_chain,
+                              n_warmup = n_warmup,
+                              n_sample = n_sample)
+
+fit_summary <-
+  fit$summary()
+```
+
+Optionally, load the saved example outputs included with the package:
+```{r}
+#| echo: true
+fit_summary <-
+  readRDS(system.file("./extdata/occupancy_2_multispecies_corr_fit_summary.rds",
+                      package = "occstanhm"))
+
+stan_data <-
+  readRDS(system.file("./extdata/occupancy_2_multispecies_corr_stan_data.rds",
+                      package = "occstanhm"))
+```
+
+And then examine the summary outputs and compare to simulated data:
+```{r}
+fit_summary |>
+  filter(grepl("logit_psi", variable)) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(median)) |>
+  print(n = Inf)
+
+fit_summary |>
+  filter(grepl("beta_psi\\[", variable)) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+stan_data$unit_species_revisit_summary |>
+  select(unit, species, psi_obs)
+
+stan_data$dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec))
+
+fit_summary |>
+  filter(grepl("logit_theta", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+fit_summary |>
+  filter(grepl("alpha_theta\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+stan_data$dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec)) |>
+  select(unit, species, theta_logit, theta_vec)
+```
+
+
+## 3-level model
+
+Similar to the two-level model, a three-level model can be coded in Stan:
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_3lvl_multispp_corr.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+Likewise, data may be simulated and then formatted for Stan:
+
+```{r}
+#| eval: false
+set.seed(123)
+n_units_sim <- 10 # max is 26 due to number of letters
+n_species_sim <- 3
+
+n_revisits_per_site_in <- rpois(n_units_sim, 40)
+hist(n_revisits_per_site_in)
+
+n_samples_per_revisits <- rpois(sum(n_revisits_per_site_in), 30) + 1L
+hist(n_samples_per_revisits,
+     breaks = seq(0, 50, by = 1))
+
+## species unit
+dat_species <-
+  expand_grid(unit = rep(letters[seq(1, n_units_sim)]),
+              species = paste("species", seq(1, n_species_sim))) |>
+  mutate(psi_vec = rbeta(n(), 3, 3),
+         theta_vec = rbeta(n(), 3, 3),
+         p_vec = rbeta(n(), 3, 3),
+         k_subsamples = 6)
+
+dat_species |>
+  print(n = Inf)
+
+## unit and revisit data
+dat_revisit <-
+  tibble(unit = rep(letters[seq(1, n_units_sim)],
+                    times = n_revisits_per_site_in)) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(revisit_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup() |>
+  select(unit, revisit_id)
+
+dat_revisit |>
+  print(n = Inf)
+
+# sample
+dat_sample <-
+  tibble(
+    unit = rep(dat_revisit |> pull(unit),
+               times = n_samples_per_revisits),
+    revisit_id = rep(dat_revisit |> pull(revisit_id),
+                     times = n_samples_per_revisits),
+  ) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(sample_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  select(-index) |>
+  ungroup()
+
+# merge together
+dat <-
+  dat_species |>
+  full_join(dat_revisit, by = "unit",
+            relationship = "many-to-many") |>
+  mutate(z = rbinom(n(), 1, psi_vec)) |>
+  full_join(dat_sample, by = c("unit", "revisit_id"),
+            relationship = "many-to-many") |>
+  arrange(unit, species) |>
+  rowid_to_column("index") |>
+  mutate(a = z * rbinom(n(), 1, theta_vec),
+         y = a * rbinom(n(), k_subsamples, p_vec),
+         a_obs = ifelse(y > 0, 1, 0)) |>
+  ungroup() |>
+  group_by(unit, revisit_id, species) |>
+  mutate(z_obs = ifelse(sum(a_obs) > 0, 1, 0)) |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+unit_species_summary <-
+  dat |>
+  group_by(unit, species) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_species_dat_start = min(index),
+            unit_species_dat_stop = max(index),
+            n_revisits_per_site = n(),
+            .groups = "keep") |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_species_summary |>
+  print(n = Inf)
+
+revisit_species_summary <-
+  dat |>
+  group_by(unit, species, revisit_id) |>
+  summarize(n_samples_per_revisit = n(),
+            revisit_start = min(index),
+            revisit_stop = max(index),
+            z_obs = mean(z_obs),
+            .groups = "drop") |>
+  group_by(unit, species) |>
+  mutate(revisit_start_in_unit_species =
+         revisit_start - min(revisit_start) + 1L,
+         revisit_stop_in_unit_species = revisit_stop - min(revisit_start) + 1L)
+
+unit_species_revisit_summary <-
+  revisit_species_summary |>
+  rowid_to_column("index") |>
+  group_by(unit, species) |>
+  summarize(unit_species_revisit_start = min(index),
+            unit_species_revisit_stop = max(index),
+            n_revisits_per_unit_species = n(),
+            psi_obs = mean(z_obs),
+            .groups = "drop") |>
+  mutate(unit_id = as.integer(factor(unit)))
+
+## Setup parameters for model
+
+# psi-level
+x_psi <- model.matrix(~ species - 1, unit_species_summary)
+x_psi |> head()
+x_psi |> dim()
+
+unit_species_summary_hyper <-
+  unit_species_summary |>
+  group_by(unit) |>
+  summarize(n = n(),
+            hyper_psi = mean(psi_obs),
+            hyper_logit = mean(logit_psi))
+
+x_psi_star <-
+  model.matrix(~ 1, unit_species_summary_hyper)
+
+beta_psi_star_prior <-
+  matrix(0,
+         nrow = x_psi_star |> ncol(),
+         ncol = x_psi |> ncol())
+
+# theta-level
+w_theta <- model.matrix(~ species - 1, unit_species_summary)
+w_theta
+w_theta |> head()
+w_theta |> dim()
+
+w_theta_star <-
+  model.matrix(~ 1, unit_species_summary_hyper)
+
+alpha_theta_star_prior <-
+  matrix(0,
+         nrow = w_theta_star |> ncol(),
+         ncol = w_theta |> ncol())
+
+# p-level
+v_p <- model.matrix(~ species - 1, unit_species_summary)
+v_p
+v_p |> head()
+v_p |> dim()
+
+v_p_star <-
+  model.matrix(~ 1, unit_species_summary_hyper)
+
+delta_p_star_prior <-
+  matrix(0,
+         nrow = v_p_star |> ncol(),
+         ncol = v_p |> ncol())
+
+## Save data in list for stan
+stan_data <-
+  # observation and latent observation data
+  list(
+    y = dat |> pull(y),
+    k_subsamples = dat |> pull(k_subsamples),
+    a_obs = dat |> pull(a),
+    z_obs = revisit_species_summary |> pull(z_obs),
+    # indexing
+    unit_species_dat_start = unit_species_summary |>
+      pull(unit_species_dat_start),
+    unit_species_dat_stop = unit_species_summary |>
+      pull(unit_species_dat_stop),
+    revisit_start_in_unit = revisit_species_summary |>
+      pull(revisit_start_in_unit_species),
+    revisit_stop_in_unit = revisit_species_summary |>
+      pull(revisit_stop_in_unit_species),
+    unit_species_revisit_start = unit_species_revisit_summary |>
+      pull(unit_species_revisit_start),
+    unit_species_revisit_stop = unit_species_revisit_summary |>
+      pull(unit_species_revisit_stop),
+    # all different dimensions, such as "n"
+    n_units = dat |> distinct(unit) |> nrow(),
+    n_units_species = unit_species_summary |> nrow(),
+    n_total_samples = dat |> nrow(),
+    n_revisits_per_unit_species = unit_species_revisit_summary |>
+      pull(n_revisits_per_unit_species),
+    n_samples_per_revisit_species = revisit_species_summary |>
+      pull(n_samples_per_revisit),
+    n_total_revisits_species = revisit_species_summary |> nrow(),
+    # psi-level inputs
+    x_psi = x_psi,
+    m_beta = x_psi |> ncol(),
+    x_psi_star = x_psi_star,
+    m_beta_star = x_psi_star |> ncol(),
+    beta_psi_star_prior = beta_psi_star_prior,
+    beta_psi_star_sd_prior = 1,
+    eta_psi = 0.1,
+    jj_psi = unit_species_revisit_summary |> dplyr::pull(unit_id),
+    # theta-level inputs
+    w_theta = w_theta,
+    m_alpha = w_theta |> ncol(),
+    w_theta_star = w_theta_star,
+    m_alpha_star = w_theta_star |> ncol(),
+    alpha_theta_star_prior = alpha_theta_star_prior,
+    alpha_theta_star_sd_prior = 1,
+    eta_theta = 0.1,
+    jj_theta = unit_species_revisit_summary |> dplyr::pull(unit_id),
+    # theta-level inputs
+    v_p = v_p,
+    m_delta = v_p |> ncol(),
+    v_p_star = v_p_star,
+    m_delta_star = v_p_star |> ncol(),
+    delta_p_star_prior = delta_p_star_prior,
+    delta_p_star_sd_prior = 1,
+    eta_p = 0.1,
+    jj_p = unit_species_revisit_summary |> dplyr::pull(unit_id),
+
+    sigma_psi_prior = 1.0,
+    sigma_psi_prior_sd = 0.1,
+
+    sigma_theta_prior = 1.0,
+    sigma_theta_prior_sd = 0.1,
+
+    sigma_p_prior = 1.0,
+    sigma_p_prior_sd = 0.1,
+    # reduce_sum setting
+    grainsize = 1
+  )
+```
+
+The model may then be fit with Stan:
+
+```{r}
+#| eval: false
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 100
+n_warmup <- 3000
+n_sample <- 3000
+
+fit <- occ_3lvl_multispp_corr(stan_data,
+                              n_chains = n_chains,
+                              n_parallel_chains = n_parallel_chains,
+                              n_threads_per_chain = n_threads_per_chain,
+                              n_refresh = n_refresh,
+                              n_warmup = n_warmup,
+                              n_sample = n_sample)
+```
+
+The saved results may optionally be loaded:
+
+```{r}
+#| echo: true
+fit_summary <- system.file("extdata/occupancy_3_multispecies_corr_fit_summary.rds",
+                   package = "occstanhm") |>
+  readRDS()
+```
+
+And then the results examined:
+
+```{r}
+#| eval: false
+fit_summary <-
+  fit$summary()
+
+fit_summary
+
+fit_summary |>
+  filter(grepl("logit_psi", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(median)) |>
+  print(n = Inf)
+
+fit_summary |>
+  filter(grepl("beta_psi\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  cbind(unit_species_revisit_summary |>
+          arrange(species, unit) |>
+          select(unit, species, psi_obs)) |>
+  as_tibble() |>
+  mutate(diff = prob - psi_obs) |>
+  select(variable, unit, species, mean, median, prob, psi_obs, diff)
+
+fit_summary |>
+  filter(grepl("logit_theta", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+fit_summary |>
+  filter(grepl("alpha_theta\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  cbind(dat_species |>
+          arrange(species, unit) |>
+          mutate(theta_logit = qlogis(theta_vec)) |>
+          select(unit, species, theta_logit, theta_vec)) |>
+  as_tibble() |>
+  select(variable, unit, species, mean, median, theta_logit, prob, theta_vec)
+
+fit_summary |>
+  filter(grepl("logit_p\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+fit_summary |>
+  filter(grepl("delta_p\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  cbind(dat_species |>
+          arrange(species, unit) |>
+          mutate(p_logit = qlogis(p_vec)) |>
+          select(unit, species, p_logit, p_vec)) |>
+  as_tibble() |>
+  select(variable, unit, species, mean, median, p_logit, prob, p_vec)
+
+fit_summary |>
+  filter(grepl("Omega_psi\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean))
+```
+
+
+## References
+
+Erickson RA, Stich DS, Hebert JL. 2020. fishStan: Hierarchical Bayesian models for fisheries. U.S. Geological Survey software release. Reston, Va.
+https://doi.org/10.5066/P9TT3ILO.
+
+Erickson RA, Stich DS, Hebert JS. 2022. fishStan: hierarchical Bayesian models for fisheries. _Journal of Open Source Software_ 7.71: 3444.
