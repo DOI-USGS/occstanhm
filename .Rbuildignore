@@ -1,0 +1,17 @@
+^occstanhm\.Rproj$
+^\.Rproj\.user$
+.gitignore
+code.json
+CONTRIBUTING.md
+DISCLAIMER.md
+docker_files/*
+examples/*
+help_function/*
+README.md
+stan_files/*
+data-raw/*
+./.local/*
+./config/*
+.bash_history
+.config
+.local

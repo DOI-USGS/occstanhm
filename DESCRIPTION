@@ -1,0 +1,27 @@
+Package: occstanhm
+Title: Multispecies occupancy models with Stan
+Version: 2.0.0.1
+Authors@R: 
+    c(person("Richard", "Erickson", , "rerickson@usgs.gov", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0003-4649-482X")),
+      person("Charlie", "Labuzzetta", , "clabuzzetta@usgs.gov", role = c("aut"),
+           comment = c(ORCID = "0000-0002-6027-0120"))
+      )
+Description: occstanhm fits occupancy models (occ) using the Stan language
+             (stan). These models are hierarchical both statistically and
+             ecologically (hm). The package uses `cmdstanr` to run both within
+             and among chain parallelization.
+License: unlicense
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Imports:
+    tibble,
+    dplyr,
+    cmdstanr,
+    bayesplot,
+    corrplot,
+    mvtnorm
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3

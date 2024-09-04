@@ -1,0 +1,342 @@
+---
+title: "Single species, single site models"
+author: "Richard Erickson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Single species, single site models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+**Warning:** Running this vignette the first time will take several minutes for the different models to compile.
+
+
+I created these models as building blocks with Stan to help myself understand the Stan code.
+These simple models are building blocks for more complex models.
+I am sharing them to help other people understand Stan models.
+The models do not include coefficients, but could be easily adapted to include these by a person familiar with Stan code.
+
+
+```{r}
+#| eval: true
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+library(occstanhm)
+library(tidyverse)
+```
+
+## psi only model
+
+The first model only fits a $\psi$-level model.
+The model has multiple revisits (`n_revisits`) with binary response (`z`) to a single site that allows $\psi$ to be estimated on the logit scale as `logit_psi`.
+Mathematically, this model would be:
+
+$$
+Z_{i} \sim \textrm{Bernoulli}(\psi),~\textrm{where}~i \in N_{\textrm{revisits}}.
+$$
+The model would be the same as a logistic regression, but is coded to allow other levels to be added to the model.
+Some key points about the model's Stan code:  
+
+* The model loops over each revisit from a single site.
+* The `logit_psi` is converted to the log-scale to make it additive.
+* 1 - $\psi$  on the logit scale is converted to the log-scale for the previous reasons and to increase the speed of computations.
+
+And, the model as coded in Stan:
+
+```{r comment=''}
+#| echo: false
+system.file("./stan_models/tutorial/occ_1lvl_1site_1spp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+This model may be fit using this package in R.
+The simulation includes a large number to ensure consistent results with the simulation and recovery of parameter estimates.
+Notice how the simulated values for `psi` is what the model recovers on the logit scale.
+
+```{r}
+library(occstanhm)
+library(tidyverse)
+psi <- 0.25
+n_revisits <- 400
+z <- rbinom(n = n_revisits, size = 1, prob = psi)
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+stan_data <-
+  list(z = z,
+       n_revisits = n_revisits)
+
+psi_fit <-
+  occ_1lvl_1site_1spp(stan_data = stan_data,
+                      n_chains = n_chains,
+                      n_threads_per_chain = n_threads_per_chain,
+                      n_warmup = n_warmup,
+                      n_sample = n_sample,
+                      n_refresh = n_refresh)
+
+## examine at model estiamted value
+psi_fit
+
+## examine simulated value from the model
+mean(z) |> qlogis() |> round(2)
+```
+
+## psi and theta  model
+
+Next, the model can be expanded to include both a $\psi$ and $\theta$-level.
+This model estimates both site occupancy ($\psi$; `logit_psi` on the logit scale) and a sample capture probability ($\theta$; `logit_theta` on the logit scale).
+That includes the total number of samples from the site (`n_total_samples`),
+the number of revisits to the site (`n_revisits`),
+the number of samples per revisit (`n_samples_per_revisit`),
+the observed occupancy or nonoccupancy at a site during a revisit (`z_obs`),
+the capture or non-capture in a sample (`a`),
+and a subsetting for each revisits start (`unit_start`) and revisits stop (`unit_stop`) in the `a` vector.
+This last parameter is necessary for Stan's discrete nature for latent variables.
+
+
+The equations are similar to the previous model, but also include the sample capture probability, which is conditional (the $|$ symbol) upon the site being occupied:
+
+\begin{align}
+Z_{i} &\sim \textrm{Bernoulli}(\psi),~\textrm{where}~i \in N_{\textrm{revisits}}~\textrm{and} \\
+A_{i,j} | z_{i} &\sim \textrm{Bernoulli}(z_{i} \theta),~\textrm{where}~j \in N_{\textrm{samples per revisits}}.
+\end{align}
+
+For the Stan code, the model expands upon the previous model and includes the following extras:
+
+* The code loads a custom function, `detection_lpmf`.
+* The custom `detection_lpmf` function (contents not shown) contains a second loop over samples within each site.
+* These nesting samples exist to allow the addition of extra layers to the model.
+* The observed non-capture is either the probability the species was not there, or, the probability the species was there, but missed.
+
+Now, the Stan code:
+
+```{r comment=''}
+#| echo: false
+system.file("./stan_models/tutorial/occ_2lvl_1site_1spp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+This model may be fit using this package in R.
+Notice how the simulated values for `psi` and `theta` are close to what the model recovers on the logit scale:
+
+```{r}
+library(occstanhm)
+library(tidyverse)
+psi <- 0.75
+n_revisits <- 30
+n_samples <- rpois(n_revisits, lambda = 10) + 1L
+# +1 is to ensure at least 1 sample
+n_samples
+theta_sim <- 0.6
+dat <-
+  tibble(unit = "one",
+         revisit = seq(1, n_revisits),
+         z = rbinom(n = n_revisits, size = 1, prob = psi)) |>
+  full_join(tibble(unit = "one",
+                   revisit = rep(seq(1, n_revisits), times = n_samples),
+                   theta =  theta_sim),
+            by = c("unit", "revisit")) |>
+  mutate(a = z * rbinom(n(), 1, theta)) |>
+  group_by(unit, revisit) |>
+  mutate(z_obs = ifelse(sum(a) > 0, 1, 0)) |>
+  ungroup() |>
+  rowid_to_column("index")
+dat
+
+sample_summary <-
+  dat |>
+  group_by(unit, revisit) |>
+  summarize(n_samples_per_revisit = n(),
+            theta_obs = mean(a),
+            z_obs = ifelse(sum(a) > 0, 1, 0),
+            unit_start = min(dplyr::cur_group_rows()),
+            unit_stop = max(dplyr::cur_group_rows()),
+            .groups = "drop")
+
+stan_data <-
+  list(a = dat |> pull(a),
+       z_obs = sample_summary |> pull(z_obs),
+       n_revisits = sample_summary |> nrow(),
+       n_samples_per_revisit = sample_summary |> pull(n_samples_per_revisit),
+       unit_start = sample_summary |> pull(unit_start),
+       unit_stop = sample_summary |> pull(unit_stop),
+       n_total_samples = dat |> nrow())
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+fit <- occ_2lvl_1site_1spp(stan_data = stan_data,
+                           n_chains = n_chains,
+                           n_parallel_chains = n_parallel_chains,
+                           n_threads_per_chain = n_threads_per_chain,
+                           n_refresh = n_refresh,
+                           n_warmup = n_warmup,
+                           n_sample = n_sample)
+
+fit
+
+## approximate simulated theta on logit scale
+dat |>
+  filter(z_obs > 0) |>
+  summarize(mean_a = mean(a)) |>
+  pull(mean_a) |>
+  qlogis()
+
+## approximate simulated psi on logit scale
+sample_summary |>
+  summarize(obs_psi = mean(z_obs)) |>
+  mutate(logit_psi = qlogis(obs_psi))
+```
+
+**Tip:** Use the R code to debug and understand the subsetting/indexing loops. You can write R code to be very similar to Stan.
+For example, with the above code, you might use `stan_data$unit_start` and `stan_data$unit_stop` with a for-loop to check your indexing with real data.
+
+## psi, theta, and p  model
+
+The last is a single site, single species, three-level occupancy model.
+This model includes the site's occupancy, $psi$, the sample capture probability, $\theta$, and the detection probability within each subsample, $p$.  
+The subsample observations ($y$) come from a binomial distribution with $k$ subsamples per sample.
+This level of the model allows us to avoid a for loop (at the cost of including individual-level coefficients for each subsample).
+
+```{=tex}
+\begin{align}
+Z_{i} &\sim \textrm{Bernoulli}(\psi),~\textrm{where}~i \in N_{\textrm{revisits}}, \\
+A_{i,j} | z_{i} &\sim \textrm{Bernoulli}(z_{i} \theta),~\textrm{where}~j \in N_{\textrm{samples per revisits}}, ~\textrm{and}\\
+Y_{i,j} | a_{i,j} &\sim \textrm{Binomial}(a_{i,j} p | k_{i,j}).
+\end{align}
+```
+
+With the Stan code, the results are similar to the previous model.
+Because we can use a binomial distribution, the model does not require a third loop:
+
+
+```{r comment=''}
+#| echo: false
+system.file("./stan_models/tutorial/occ_3lvl_1site_1spp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+This model may be fit using this package in R.
+Notice how the simulated values for `psi`, `theta`, and `p` are close to what the model recovers on the logit scale.
+
+```{r}
+library(tidyverse)
+
+psi_sim <- 0.75
+n_revisits <- 40
+n_samples <- rpois(n_revisits, lambda = 10) + 1L
+n_samples
+theta_sim <- 0.6
+theta_sim
+n_subsamples_in <- 10
+p_sim <- 0.25
+
+dat <-
+  tibble(unit = "one",
+         revisit = seq(1, n_revisits),
+         z = rbinom(n = n_revisits, size = 1, prob = psi_sim),
+         n_subsamples = n_subsamples_in) |>
+  full_join(tibble(unit = "one",
+                   revisit = rep(seq(1, n_revisits), times = n_samples),
+                   theta =  theta_sim,
+                   p = p_sim),
+            by = c("unit", "revisit")) |>
+  mutate(a = z * rbinom(n(), 1, theta),
+         y = a * rbinom(n(), n_subsamples, p)) |>
+  group_by(unit, revisit) |>
+  mutate(a_obs = ifelse(a > 0, 1, 0),
+         z_obs = ifelse(sum(y) > 0, 1, 0)) |>
+  ungroup() |>
+  rowid_to_column("index")
+
+dat
+
+dat |>
+  filter(z != z_obs)
+
+dat |>
+  filter(a > 0)
+
+dat |>
+  filter(a != a_obs)
+
+sample_summary <-
+  dat |>
+  group_by(unit, revisit) |>
+  summarize(n_samples_per_revisit = n(),
+            p_obs = mean(y / n_subsamples),
+            theta_obs = mean(a_obs),
+            z_obs = ifelse(sum(a_obs) > 0, 1, 0),
+            unit_start = min(dplyr::cur_group_rows()),
+            unit_stop = max(dplyr::cur_group_rows()),
+            .groups = "drop")
+
+sample_summary
+
+stan_data <-
+  list(y = dat |> pull(y),
+       a_obs = dat |> pull(a_obs),
+       k_subsamples = dat |> pull(n_subsamples),
+       z_obs = sample_summary |> pull(z_obs),
+       n_revisits = sample_summary |> nrow(),
+       n_samples_per_revisit = sample_summary |> pull(n_samples_per_revisit),
+       unit_start = sample_summary |> pull(unit_start),
+       unit_stop = sample_summary |> pull(unit_stop),
+       n_total_samples = dat |> nrow())
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+fit <- occ_3lvl_1site_1spp(stan_data,
+                           n_chains = n_chains,
+                           n_parallel_chains = n_parallel_chains,
+                           n_threads_per_chain = n_threads_per_chain,
+                           n_refresh = n_refresh,
+                           n_warmup = n_warmup,
+                           n_sample = n_sample)
+
+fit_summary <-
+  fit$summary()
+
+fit_summary |>
+  filter(variable %in% c("logit_psi", "logit_theta", "logit_p")) |>
+  select(variable, mean, median) |>
+  mutate(p_mean = plogis(median))
+
+dat
+psi_sim
+theta_sim
+p_sim
+
+sample_summary |>
+  summarize(obs_psi = mean(z_obs)) |>
+  mutate(logit_psi = qlogis(obs_psi))
+```

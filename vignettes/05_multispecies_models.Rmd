@@ -1,0 +1,639 @@
+---
+title: "Multispecies models"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Multispecies models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r}
+#| eval: true
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+library(occstanhm)
+library(tidyverse)
+```
+
+**Warning:** Running this vignette the first time will take several minutes for the different models to compile.
+
+I created these models as building blocks with Stan to help myself understand the Stan code.
+These simple models are building blocks for more complex models.
+I am sharing them to help other people understand Stan models.
+The models do not include coefficients, but could be easily adapted to include these by a person familiar with Stan code.
+
+# Multispecies models
+
+These models estimate multiple occupancy for different sites and species.
+Each site is a row and each column a species.
+The models build toward the correlated structure. 
+
+## Multi-psi, multispecies
+
+The first model estimates multiple psi values for multiple species, $\psi_{j,s}$ (`psi`, or `logit_psi` on the logit scale in Stan) from  $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`), and $N_\textrm{species}$ different species (`n_species`).
+Both are combined in Stan as well to be $N_\textrm{units, species}$.
+This indexing is needed because of how Stan vectorizes and slices data.
+Each unit-species combination may have a unique number of revisits that are stored in vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`:
+
+$$
+Z_{i,~j,~s} \sim \textrm{Bernoulli}(\textrm{logit}(\psi_{j, s})),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j},~j\in N_\textrm{number units},~\textrm{and}~s \in N_\textrm{species}.
+$$
+The model also includes a predictor matrix for $\textrm{logit}(\psi_{j, s})$ (`logit_psi`) of coefficients $\boldsymbol{\beta}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\beta}$ and each species is a column in $\boldsymbol{\beta}$.
+A vector of length $N_\textrm{unit, species}$, $jj_\textrm{\psi}$, expands $\boldsymbol{\beta}$ to match the vector $\textrm{logit}(\psi_{j, s})$.
+A vector of length $N_\textrm{unit, species}$, $jj_\textrm{\theta}$, expands $\boldsymbol{\alpha}$ to match the vector $\textrm{logit}(\theta_{j, s})$.
+A predictor matrix includes binary membership coding for each species at the $\psi$-level, $\textbf{X}$.
+A predictor matrix includes binary membership coding for each species at the $\theta$-level, $\textbf{W}$:
+
+\begin{align}
+\textrm{logit}(\psi_{j, s}) = \textbf{X} \boldsymbol{\beta}[jj_\psi].
+\textrm{logit}(\theta_{j, s}) = \textbf{X} \boldsymbol{\beta}[jj_\theta].
+\end{align}
+
+This model is coded in Stan, using similar notation as other models:
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_1lvl_multispp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+The Stan model may also be fit in R after data is simulated:
+
+```{r}
+library(tidyverse)
+
+n_units_sim <- 3 # max is 26 due to number of letters
+n_species_sim <- 4
+n_revisits_per_site_in <- rpois(n_units_sim, lambda = 35)
+
+n_revisits_per_site_in
+n_revisits_per_site_in |> sum()
+
+unit_revisit_in <-
+  tibble(unit = rep(letters[seq(1, n_units_sim)],
+                    times = n_revisits_per_site_in)) |>
+  group_by(unit) |>
+  mutate(revisit = dplyr::cur_group_rows() -
+          min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup()
+
+unit_revisit_in  |> print(n = Inf)
+
+dat <-
+  expand_grid(
+    unit = letters[seq(1, n_units_sim)],
+    species = paste("species", seq(1, n_species_sim), sep = "-")) |>
+  mutate(unit_id = as.integer(factor(unit)),
+         psi = rbeta(n(), shape1 = 3, shape2 = 3)) |>
+  full_join(unit_revisit_in, by = "unit",
+            relationship = "many-to-many") |>
+  mutate(z_obs =  rbinom(n(), size = 1, prob = psi)) |>
+  arrange(unit, species) |>
+  rowid_to_column("index") |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+## Also, make sure that dat is in full form (e.g., no missing rows)
+unit_species_summary <-
+  dat |>
+  group_by(unit, unit_id, species) |>
+  summarize(unit_species_start = min(index),
+            unit_species_stop = max(index),
+            n_revisits_per_site = n(),
+            psi_obs = mean(z_obs),
+            .groups = "drop") |>
+  mutate(logit_psi = qlogis(psi_obs)) |>
+  ungroup()
+
+unit_species_summary
+
+x_psi <- model.matrix(~ species - 1, unit_species_summary)
+x_psi |> head()
+
+stan_data <-
+  list(z_obs = dat |> dplyr::pull(z_obs),
+       n_revisits = dat |> nrow(),
+       n_revisits_per_site = unit_species_summary |>
+                                dplyr::pull(n_revisits_per_site),
+       n_units_species = unit_species_summary |> nrow(),
+       unit_start = unit_species_summary |> dplyr::pull(unit_species_start),
+       unit_stop = unit_species_summary |> dplyr::pull(unit_species_stop),
+       n_revisits_per_unit = unit_species_summary |>
+                                dplyr::pull(n_revisits_per_site),
+       x_psi = x_psi,
+       m_beta = x_psi |> ncol(),
+       n_units = 3,
+       jj_psi = unit_species_summary |> dplyr::pull(unit_id),
+       grainsize = 1
+  )
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+
+fit <- occ_1lvl_multispp(stan_data,
+                         n_chains = n_chains,
+                         n_parallel_chains = n_parallel_chains,
+                         n_threads_per_chain = n_threads_per_chain,
+                         n_refresh = n_refresh,
+                         n_warmup = n_warmup,
+                         n_sample = n_sample)
+
+fit$summary() |>
+  filter(grepl("beta_psi\\[", variable)) |>
+  print(n = Inf) |>
+  select(variable, mean, median) |>
+  mutate(obs = unit_species_summary |> arrange(species) |> pull(psi_obs) |>
+           qlogis())
+
+unit_species_summary |> pull(psi_obs)
+
+```
+
+## occupancy_2_multispecies
+
+This is a two-level, multispecies occupancy model.
+
+The second model estimates multiple $\psi$ values for multiple species, $\psi_{j,s}$ (`psi`, or `logit_psi` on the logit scale in Stan) and multiple $\theta$ values for multiple species $\theta_{j,s}$ (`theta`, or `logit_theta` on the logit scale in Stan) from  $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`), and $N_\textrm{species}$ different species (`n_species`).
+The indices are combined in Stan as well to be $N_\textrm{units, species}$.
+This indexing is needed because of how Stan vectorizes and slices data.
+Each unit-species combination may have a unique number of revisits that are stored in vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`:
+
+```{=tex}
+\begin{align}
+Z_{i,~j,~s} &\sim \textrm{Bernoulli}(\textrm{logit}(\psi_{j, s})),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j},~j\in N_\textrm{number units},~\textrm{and}~s \in N_\textrm{species},~\textrm{and} \\
+A_{i,~j,~k~s}|z_{i,~j,~s} &\sim \textrm{Bernoulli}(\textrm{logit}(z_{i,~j,~s}\theta_{j, s}))~\textrm{where}~k \in N_{\textrm{samples per revisit}}.
+\end{align}
+```
+
+The model includes a predictor matrix for $\textrm{logit}(\psi_{j, s})$ (`logit_psi`) of coefficients $\boldsymbol{\beta}$.
+The model includes a predictor matrix for $\textrm{logit}(\theta_{j, s})$ (`logit_theta`) of coefficients $\boldsymbol{\alpha}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\alpha}$ and each species is a column in $\boldsymbol{\alpha}$.
+A vector of length $N_\textrm{unit, species}$, $jj_\textrm{\psi}$, expands $\boldsymbol{\beta}$ to match the vector $\textrm{logit}(\psi_{j, s})$.
+A vector of length $N_\textrm{total observations}$, $jj_\textrm{p}$, expands $\boldsymbol{\delta}$ to match the vector $\textrm{logit}(\theta_{j, s})$.
+Lastly, a predictor matrix includes binary membership coding for each species, $\textbf{X}$:
+
+\begin{align}
+\textrm{logit}(\psi_{j, s}) &= \textbf{X} \boldsymbol{\beta}[jj_\psi]~\textrm{and}\\
+\textrm{logit}(\theta_{j, s}) &= \textbf{V} \boldsymbol{\alpha}[jj_\theta],
+\end{align}
+
+This model is coded in Stan, using similar notation as other models:
+
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_2lvl_multispp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+```{r}
+library(tidyverse)
+n_units_sim <- 2 # max is 26 due to number of letters
+n_species_sim <- 3
+
+n_revisits_per_site_in <- rpois(n_units_sim, 30)
+hist(n_revisits_per_site_in)
+
+n_samples_per_revisits <- rpois(sum(n_revisits_per_site_in), 20) + 1L
+
+## species unit
+dat_species <-
+  expand_grid(unit = rep(letters[seq(1, n_units_sim)]),
+              species = paste("species", seq(1, n_species_sim))) |>
+  mutate(psi_vec = rbeta(n(), 3, 3),
+         theta_vec = rbeta(n(), 3, 3))
+
+dat_species |>
+  print(n = Inf)
+
+## unit and revisit data
+dat_revisit <-
+  tibble(unit = rep(letters[seq(1, n_units_sim)],
+                    times = n_revisits_per_site_in)) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(revisit_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup() |>
+  select(unit, revisit_id)
+
+dat_revisit |>
+  print(n = Inf)
+
+# sample
+dat_sample <-
+  tibble(unit =
+           rep(dat_revisit |> pull(unit),
+               times = n_samples_per_revisits),
+         revisit_id =
+           rep(dat_revisit |> pull(revisit_id),
+               times = n_samples_per_revisits),
+  ) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(sample_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  select(-index) |>
+  ungroup()
+
+# merge together
+dat <-
+  dat_species |>
+  full_join(dat_revisit, by = "unit",
+            relationship = "many-to-many") |>
+  mutate(z = rbinom(n(), 1, psi_vec)) |>
+  full_join(dat_sample, by = c("unit", "revisit_id"),
+            relationship = "many-to-many") |>
+  arrange(unit, species) |>
+  rowid_to_column("index") |>
+  mutate(a = z * rbinom(n(), 1, theta_vec)) |>
+  ungroup() |>
+  group_by(unit, revisit_id, species) |>
+  mutate(z_obs = ifelse(sum(a) > 0, 1, 0)) |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+unit_species_summary <-
+  dat |>
+  group_by(unit, species) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_species_dat_start = min(index),
+            unit_species_dat_stop = max(index),
+            n_revisits_per_site = n(),
+            .groups = 'keep') |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_species_summary |>
+  print(n = Inf)
+
+revisit_species_summary <-
+  dat |>
+  group_by(unit, species, revisit_id) |>
+  summarize(n_samples_per_revisit = n(),
+            revisit_start = min(index),
+            revisit_stop = max(index),
+            z_obs = mean(z_obs),
+            .groups = "drop") |>
+  group_by(unit, species) |>
+  mutate(revisit_start_in_unit_species = revisit_start -
+          min(revisit_start) + 1L,
+         revisit_stop_in_unit_species = revisit_stop -
+          min(revisit_start) + 1L)
+
+unit_species_revisit_summary <-
+  revisit_species_summary |>
+  rowid_to_column("index") |>
+  group_by(unit, species) |>
+  summarize(unit_species_revisit_start = min(index),
+            unit_species_revisit_stop = max(index),
+            n_revisits_per_unit_species = n(),
+            psi_obs = mean(z_obs),
+            .groups = "drop")
+
+stan_data <-
+  # observation and latent observation data
+  list(
+    a = dat |> pull(a),
+    z_obs = revisit_species_summary |> pull(z_obs),
+    # indexing
+    unit_species_dat_start = unit_species_summary |>
+      pull(unit_species_dat_start),
+    unit_species_dat_stop = unit_species_summary |>
+      pull(unit_species_dat_stop),
+    revisit_start_in_unit = revisit_species_summary |>
+      pull(revisit_start_in_unit_species),
+    revisit_stop_in_unit = revisit_species_summary |>
+      pull(revisit_stop_in_unit_species),
+    unit_species_revisit_start = unit_species_revisit_summary |>
+      pull(unit_species_revisit_start),
+    unit_species_revisit_stop = unit_species_revisit_summary |>
+      pull(unit_species_revisit_stop),
+    # all different dimensions, such as "n"
+    n_units_species = unit_species_summary |> nrow(),
+    n_total_samples = dat |> nrow(),
+    n_revisits_per_unit_species = unit_species_revisit_summary |>
+      pull(n_revisits_per_unit_species),
+    n_samples_per_revisit_species = revisit_species_summary |>
+      pull(n_samples_per_revisit),
+    n_total_revisits_species = revisit_species_summary |> nrow(),
+    # reduce_sum setting
+    grainsize = 1
+  )
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+fit <- occ_2lvl_multispp(stan_data,
+                         n_chains = n_chains,
+                         n_parallel_chains = n_parallel_chains,
+                         n_threads_per_chain = n_threads_per_chain,
+                         n_warmup = n_warmup,
+                         n_sample = n_sample,
+                         n_refresh = n_refresh)
+fit_summary <-
+  fit$summary(.cores = 3)
+
+fit_summary |>
+  filter(grepl("logit_psi", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(median)) |>
+ print(n = Inf)
+
+unit_species_revisit_summary |>
+ select(unit, species, psi_obs)
+
+dat_species |>
+  #  arrange(species, unit) |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec))
+
+fit_summary |>
+  filter(grepl("logit_theta", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec)) |>
+  select(unit, species, theta_logit, theta_vec)
+```
+
+## occupancy_3_multispecies
+
+This is a three-level, multispecies occupancy model.
+
+The third model estimates multiple $\psi$ values for multiple species, $\psi_{j,s}$ (`psi`, or `logit_psi` on the logit scale in Stan), multiple $\theta$ values for multiple species, $\theta_{j,s}$, (`theta`, or `logit_theta` on the logit scale in Stan), and multiple $p$ values for multiple species, $p_{j,s}$  (`p`, or `logit_p` on the logit scale in Stan) from  $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`), and $N_\textrm{species}$ different species (`n_species`).
+The indices are combined in Stan as well to be $N_\textrm{units, species}$.
+This indexing is needed because of how Stan vectorizes and slices data.
+Each unit-species combination may have a unique number of revisits that are stored in vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`:
+
+```{=tex}
+\begin{align}
+Z_{i,~j,~s} &\sim \textrm{Bernoulli}(\textrm{logit}(\psi_{j, s})),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j},~j\in N_\textrm{number units},~\textrm{and}~s \in N_\textrm{species}, \\
+A_{i,~j,~k~s}|z_{i,~j,~s} &\sim \textrm{Bernoulli}(z_{i,~j,~s}, \textrm{logit}(\theta_{j, s}))~\textrm{where}~k \in N_{\textrm{samples per revisit}},~\textrm{and}\\
+Y_{i,~j,~k,~s} |a_{i,~j,~k,~s} &\sim \textrm{Binomial}(a_{i,~j,~k~s} \textrm{logit}(p_{j, s}| k_{\textrm{subsamples},~i,~j,~k,~s})).
+\end{align}
+```
+
+The model includes a predictor matrix for $\textrm{logit}(\psi_{j, s})$ (`logit_psi`) of coefficients $\boldsymbol{\beta}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\beta}$ and each species is a column in $\boldsymbol{\beta}$.
+The model includes a predictor matrix for $\textrm{logit}(\theta_{j, s})$ (`logit_theta`) of coefficients $\boldsymbol{\alpha}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\alpha}$ and each species is a column in $\boldsymbol{\alpha}$.
+Each unit has its own row in a predictor vector $\boldsymbol{\delta}$ and each species is a column in $\boldsymbol{\delta}$.
+
+The model includes a predictor matrix for $\textrm{logit}(p_{j, s})$ (`logit_p`) of coefficients $\boldsymbol{\delta}$.
+A vector of length $N_\textrm{unit, species}$, $jj_\textrm{\psi}$, expands $\boldsymbol{\beta}$ to match the vector $\textrm{logit}(\psi_{j, s})$.
+A vector of length $N_\textrm{total observations}$, $jj_\textrm{\theta}$, expands $\boldsymbol{\alpha}$ to match the vector $\textrm{logit}(\theta_{j, s})$.
+A vector of length $N_\textrm{total observations}$, $jj_\textrm{p}$, expands $\boldsymbol{\delta}$ to match the vector $\textrm{logit}(\theta_{j, s})$.
+Lastly, predictor matrices includes binary membership coding for each species, $\textbf{X}$, $\textbf{W}$, and $\textbf{V}$:
+
+\begin{align}
+\textrm{logit}(\psi_{j, s}) &= \textbf{X} \boldsymbol{\beta}[jj_\psi], \\
+\textrm{logit}(\theta_{j, s}) &= \textbf{W} \boldsymbol{\alpha}[jj_\theta],~\textrm{and}\\
+\textrm{logit}(p_{j, s}) &= \textbf{V} \boldsymbol{\delta}[jj_p].
+\end{align}
+
+This model is coded in Stan, using similar notation to other models:
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_3lvl_multispp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+```{r}
+library(tidyverse)
+
+n_units_sim <- 2 # max is 26 due to number of letters
+n_species_sim <- 3
+
+n_revisits_per_site_in <- rpois(n_units_sim, 30)
+hist(n_revisits_per_site_in)
+
+n_samples_per_revisits <- rpois(sum(n_revisits_per_site_in), 20) + 1L
+hist(n_samples_per_revisits,
+     breaks = seq(0, 40, by = 1))
+
+
+## species unit
+dat_species <-
+  expand_grid(unit = rep(letters[seq(1, n_units_sim)]),
+              species = paste("species", seq(1, n_species_sim))) |>
+  mutate(psi_vec = rbeta(n(), 3, 3),
+         theta_vec = rbeta(n(), 3, 3),
+         p_vec = rbeta(n(), 3, 3),
+         k_subsamples = 6)
+
+dat_species |>
+  print(n = Inf)
+
+## unit and revisit data
+dat_revisit <-
+  tibble(unit = rep(letters[seq(1, n_units_sim)],
+                    times = n_revisits_per_site_in)) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(revisit_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup() |>
+  select(unit, revisit_id)
+
+dat_revisit |>
+  print(n = Inf)
+
+# sample
+dat_sample <-
+  tibble(unit =
+           rep(dat_revisit |> pull(unit),
+               times = n_samples_per_revisits),
+         revisit_id =
+           rep(dat_revisit |> pull(revisit_id),
+               times = n_samples_per_revisits),
+  ) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(sample_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  select(-index) |>
+  ungroup()
+
+# merge together
+dat <-
+  dat_species |>
+  full_join(dat_revisit, by = "unit",
+            relationship = "many-to-many") |>
+  mutate(z = rbinom(n(), 1, psi_vec)) |>
+  full_join(dat_sample, by = c("unit", "revisit_id"),
+            relationship = "many-to-many") |>
+  arrange(unit, species) |>
+  rowid_to_column("index") |>
+  mutate(a = z * rbinom(n(), 1, theta_vec),
+         y = a * rbinom(n(), k_subsamples, p_vec),
+         a_obs = ifelse(y > 0, 1, 0)) |>
+  ungroup() |>
+  group_by(unit, revisit_id, species) |>
+  mutate(z_obs = ifelse(sum(a_obs) > 0, 1, 0)) |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+unit_species_summary <-
+  dat |>
+  group_by(unit, species) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_species_dat_start = min(index),
+            unit_species_dat_stop = max(index),
+            n_revisits_per_site = n(),
+            .groups = 'keep') |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_species_summary |>
+  print(n = Inf)
+
+revisit_species_summary <-
+  dat |>
+  group_by(unit, species, revisit_id) |>
+  summarize(n_samples_per_revisit = n(),
+            revisit_start = min(index),
+            revisit_stop = max(index),
+            z_obs = mean(z_obs),
+            .groups = "drop") |>
+  group_by(unit, species) |>
+  mutate(
+    revisit_start_in_unit_species = revisit_start - min(revisit_start) + 1L,
+    revisit_stop_in_unit_species = revisit_stop - min(revisit_start) + 1L)
+
+unit_species_revisit_summary <-
+  revisit_species_summary |>
+  rowid_to_column("index") |>
+  group_by(unit, species) |>
+  summarize(unit_species_revisit_start = min(index),
+            unit_species_revisit_stop = max(index),
+            n_revisits_per_unit_species = n(),
+            psi_obs = mean(z_obs),
+            .groups = "drop")
+
+stan_data <-
+  # observation and latent observation data
+  list(
+    y = dat |> pull(y),
+    k_subsamples = dat |> pull(k_subsamples),
+    a_obs = dat |> pull(a),
+    z_obs = revisit_species_summary |> pull(z_obs),
+    # indexing
+    unit_species_dat_start = unit_species_summary |>
+      pull(unit_species_dat_start),
+    unit_species_dat_stop = unit_species_summary |>
+      pull(unit_species_dat_stop),
+    revisit_start_in_unit = revisit_species_summary |>
+      pull(revisit_start_in_unit_species),
+    revisit_stop_in_unit = revisit_species_summary |>
+      pull(revisit_stop_in_unit_species),
+    unit_species_revisit_start = unit_species_revisit_summary |>
+      pull(unit_species_revisit_start),
+    unit_species_revisit_stop = unit_species_revisit_summary |>
+      pull(unit_species_revisit_stop),
+    # all different dimensions, such as "n"
+    n_units_species = unit_species_summary |> nrow(),
+    n_total_samples = dat |> nrow(),
+    n_revisits_per_unit_species = unit_species_revisit_summary |>
+      pull(n_revisits_per_unit_species),
+    n_samples_per_revisit_species = revisit_species_summary |>
+       pull(n_samples_per_revisit),
+    n_total_revisits_species = revisit_species_summary |> nrow(),
+    # reduce_sum setting
+    grainsize = 1
+  )
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+fit <- occ_3lvl_multispp(stan_data,
+                         n_chains = n_chains,
+                         n_parallel_chains = n_parallel_chains,
+                         n_threads_per_chain = n_threads_per_chain,
+                         n_refresh = n_refresh,
+                         n_warmup = n_warmup,
+                         n_sample = n_sample)
+fit_summary <-
+  fit$summary(.cores = 4)
+
+fit_summary |>
+  filter(grepl("logit_psi", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(median)) |>
+  print(n = Inf)
+
+unit_species_revisit_summary |>
+  select(unit, species, psi_obs)
+
+dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec))
+
+fit_summary |>
+  filter(grepl("logit_theta", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec)) |>
+  select(unit, species, theta_logit, theta_vec)
+
+fit_summary |>
+  filter(grepl("logit_p\\[", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean)) |>
+  print(n = Inf)
+
+dat_species |>
+  mutate(psi_logit = qlogis(psi_vec),
+         theta_logit = qlogis(theta_vec),
+         p_logit = qlogis(p_vec)) |>
+  select(unit, species, p_logit, p_vec)
+```

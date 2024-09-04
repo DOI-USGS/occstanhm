@@ -1,0 +1,292 @@
+---
+title: "Single species, multiple site models"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Single species, multiple site models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r}
+#| eval: true
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+library(occstanhm)
+library(tidyverse)
+```
+
+**Warning:** Running this vignette the first time will take several minutes for the different models to compile.
+
+I (RAE) created these models as building blocks with Stan to help myself understand the Stan code.
+These simple models are building blocks for more complex models.
+I am sharing them to help other people understand Stan models.
+The models do not include coefficients, but could be easily adapted to include these by a person familiar with Stan code.
+
+This vignette covers models with single species from multiple locations.
+These locations may be replicated across space or time and are called _units_ in this package, although they could also be called _sites_ or similar terms.
+
+
+## Multi-psi model
+
+The first model estimates multiple values for $\psi_j$ (`psi`, or `logit_psi` on the logit scale in Stan) from $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`).
+Each unit may have a unique number of revisits that are stored in vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`:
+
+$$
+Z_{i,j} \sim \textrm{Bernoulli}(\psi_j),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j}.
+$$
+
+The model has multiple binary revisits (`z`) that are sliced using a starting index vector (`unit_start`) and a stopping index vector (`unit_stop`) for a single site that allows each $\psi_j$ to be estimated on the logit scale as a vector `logit_psi`.
+In Stan, this is may be coded as follows:
+
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_1lvl_multisite_1spp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+Data may be simulated and then the model fit with R as well:
+
+```{r}
+library(occstanhm)
+library(tidyverse)
+n_units_sim <- 10 # max is 26 due to number of letters
+psi_vec_in <- rbeta(n_units_sim, 3, 3)
+hist(psi_vec_in)
+n_units_in <- length(psi_vec_in)
+
+n_revisits_per_unit_in <- rpois(n_units_sim, 35)
+
+dat <-
+  tibble(unit = rep(letters[seq(1, n_units_in)],
+                    times = n_revisits_per_unit_in),
+         psi_vec = rep(psi_vec_in, times = n_revisits_per_unit_in)) |>
+  mutate(z_obs =  rbinom(n(), size = 1, prob = psi_vec)) |>
+  rowid_to_column("index") |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+unit_summary <-
+  dat |>
+  group_by(unit) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_start = min(index),
+            unit_stop = max(index),
+            n_revisits_per_unit = n()) |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_summary
+
+stan_data <-
+  list(
+    z_obs = dat |> pull(z_obs),
+    n_revisits = dat |> nrow(),
+    n_revisits_per_unit = unit_summary |> pull(n_revisits_per_unit),
+    n_units = unit_summary |> nrow(),
+    unit_start = unit_summary |> pull(unit_start),
+    unit_stop = unit_summary |> pull(unit_stop),
+    grainsize = 1
+  )
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 2000
+n_sample <- 2000
+
+fit <- occ_1lvl_multisite_1spp(stan_data = stan_data,
+                               n_chains = n_chains,
+                               n_parallel_chains = n_parallel_chains,
+                               n_threads_per_chain = n_threads_per_chain,
+                               n_refresh = n_refresh,
+                               n_warmup = n_warmup,
+                               n_sample = n_sample)
+
+fit
+unit_summary |> pull(psi_obs) |> qlogis() |> round(2)
+unit_summary |> pull(psi_obs) |> round(2)
+```
+
+## occupancy_2
+
+A second model estimates multiple values for $\psi_j$ (`psi`, or `logit_psi` on the logit scale in Stan) and $\theta$ (`theta` or `logit_theta` on the logit scale in Stan) from $N_\textrm{units}$ different units (`n_units`), $j$ (`unit_idx`).
+Each unit may have a unique number of revisits that are stored in vector, $N_\textrm{revisits per unit}$, `n_revisits_per_unit`.
+Likewise, each unit may have a unique number of samples per revisit that are stored in an object (a matrix in math syntax and a vector in Stan), $N_{\textrm{samples per revisit},~j, ~k}$ (`n_samples_per_revisit`): 
+
+```{=tex}
+\begin{align}
+Z_{i,j} &\sim \textrm{Bernoulli}(\psi_j),~\textrm{where}~i \in N_{\textrm{revisits per unit},~j}~\textrm{and}\\
+A_{i,j,k}|z_{i,j}  &\sim \textrm{Bernoulli}(z_{i,j} \theta_{j})~\textrm{where}~i \in N_{\textrm{samples per revisit},~j,~k}\\
+\end{align}
+```
+
+Adapting this code to Stan builds upon the previous model by including a second set of subsetting.
+With this syntax, `unit_revisit_start` and `unit_revisit_stop` slice revisit-level data by each unit and `unit_dat_start` and `unit_dat_stop` slice the observed ($a$-level) data by each unit.
+`revisit_start_in_unit` and `revisit_stop_in_unit` slice each revisit within a unit for each revisit.
+
+**Warning:** Nested for-loops are confusing and tricky in Stan.
+They exist in this model because of Stan's syntax for the marginalization of discrete latent variables and the parallel `reduce_sum()` function.
+
+First, these are combined for slice data by unit (for the first for-loop in Stan).
+Second, these are used for each revisit (for the second for-loop in Stan).
+Third, a loop goes over each sample (for the third for-loop in Stan):
+These functions are then coded in Stan:
+
+```{r comment=''}
+#| echo: false
+system.file("stan_models/tutorial/occ_2lvl_multisite_1spp.stan",
+            package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+This Stan model may then be fit in R after simulating data:
+
+```{r}
+library(tidyverse)
+n_units_sim <- 5 # max is 26 due to number of letters
+psi_vec_in <- rbeta(n_units_sim, 3, 3)
+theta_vec_in <- rbeta(n_units_sim, 3, 3)
+
+hist(psi_vec_in)
+hist(theta_vec_in)
+
+n_units_in <- length(psi_vec_in)
+
+n_revisits_per_unit_in <- rpois(n_units_sim, 30)
+hist(n_revisits_per_unit_in)
+
+n_samples_per_revisits <- rpois(sum(n_revisits_per_unit_in), 30) + 1L
+hist(n_samples_per_revisits)
+
+## unit and revisit data
+dat_revisit <-
+  tibble(unit = rep(letters[seq(1, n_units_in)],
+                    times = n_revisits_per_unit_in),
+         psi_vec = rep(psi_vec_in, times = n_revisits_per_unit_in),
+         theta_vec = rep(theta_vec_in, times = n_revisits_per_unit_in)) |>
+  mutate(z =  rbinom(n(), size = 1, prob = psi_vec)) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(revisit_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  ungroup() |>
+  select(unit, revisit_id, psi_vec, theta_vec, z)
+
+# sample
+dat_sample <-
+  tibble(
+    unit = rep(dat_revisit |> pull(unit),
+               times = n_samples_per_revisits),
+    revisit_id = rep(dat_revisit |> pull(revisit_id),
+                     times = n_samples_per_revisits),
+  ) |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  mutate(sample_id = dplyr::cur_group_rows() -
+           min(dplyr::cur_group_rows()) + 1L) |>
+  select(-index) |>
+  ungroup()
+
+# merge together
+dat <-
+  dat_revisit |>
+  full_join(dat_sample, by = c("unit", "revisit_id")) |>
+  rowid_to_column("index") |>
+  mutate(a = z * rbinom(n(), 1, theta_vec)) |>
+  group_by(unit, revisit_id) |>
+  mutate(z_obs = ifelse(sum(z) > 0, 1, 0)) |>
+  ungroup()
+
+## Need to make sure arrange by unit first
+## then within unit
+unit_summary <-
+  dat |>
+  group_by(unit) |>
+  summarize(psi_obs = mean(z_obs),
+            unit_dat_start = min(index),
+            unit_dat_stop = max(index),
+            n_revisits_per_unit = n()) |>
+  mutate(logit_psi = qlogis(psi_obs))
+
+unit_summary
+
+revisit_summary <-
+  dat |>
+  group_by(unit, revisit_id) |>
+  summarize(n_samples_per_revisit = n(),
+            revisit_start = min(index),
+            revisit_stop = max(index),
+            z_obs = mean(z_obs),
+            .groups = "drop") |>
+  group_by(unit) |>
+  mutate(revisit_start_in_unit = revisit_start - min(revisit_start) + 1L,
+         revisit_stop_in_unit = revisit_stop - min(revisit_start) + 1L)
+
+unit_revisit_summary <-
+  revisit_summary |>
+  rowid_to_column("index") |>
+  group_by(unit) |>
+  summarize(unit_revisit_start = min(index),
+            unit_revisit_stop = max(index),
+            n_samples_per_unit = n())
+stan_data <-
+  list(
+    a = dat |> pull(a),
+    unit_dat_start = unit_summary |> pull(unit_dat_start),
+    unit_dat_stop = unit_summary |> pull(unit_dat_stop),
+    revisit_start_in_unit = revisit_summary |> pull(revisit_start_in_unit),
+    revisit_stop_in_unit = revisit_summary |> pull(revisit_stop_in_unit),
+    n_total_samples = dat |> nrow(),
+    z_obs = revisit_summary |> pull(z_obs),
+    n_samples_per_revisit = revisit_summary |> pull(n_samples_per_revisit),
+    n_total_revisits = revisit_summary |> nrow(),
+    unit_revisit_start = unit_revisit_summary |> pull(unit_revisit_start),
+    unit_revisit_stop = unit_revisit_summary |> pull(unit_revisit_stop),
+    n_revisits_per_unit = unit_revisit_summary |> pull(n_samples_per_unit),
+    n_samples_per_unit = unit_summary |> pull(n_revisits_per_unit),
+    n_units = unit_summary |> nrow(),
+    grainsize = 1
+  )
+
+n_chains <- 4
+n_parallel_chains <- 4
+n_threads_per_chain <- 4
+n_refresh <- 0
+n_warmup <- 1000
+n_sample <- 1000
+
+fit <- occ_2lvl_multisite_1spp(stan_data,
+                               n_chains = n_chains,
+                               n_parallel_chains = n_parallel_chains,
+                               n_threads_per_chain = n_threads_per_chain,
+                               n_refresh = n_refresh,
+                               n_warmup = n_warmup,
+                               n_sample = n_sample)
+
+fit$summary() |>
+  filter(grepl("logit_psi|logit_theta", variable)) |>
+  select(variable, mean, median) |>
+  mutate(mean = round(mean, 2),
+         median = round(median, 2),
+         prob = plogis(mean))
+
+unit_summary |> pull(psi_obs) |> qlogis() |> round(2)
+unit_summary |> pull(psi_obs) |> round(2)
+
+theta_vec_in |> round(2)
+```

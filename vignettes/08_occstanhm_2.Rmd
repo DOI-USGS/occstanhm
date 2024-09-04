@@ -1,0 +1,327 @@
+---
+title: "occstanhm_2"
+author: "Richard Erickson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{occstanhm_2}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+```{r}
+#| eval: true
+#| echo: false
+#| warning: false
+#| message: false
+#| error: false
+library(occstanhm)
+library(tidyverse)
+library(ggthemes)
+```
+**Warning:** This example contains a small presimulated dataset and small Stan model run to demonstrate.
+These size limitations were done because of file size limitations in packages and GitHub.
+We encourage you to simulate larger datasets (e.g., more units, visits) to better explore the model and understand it.
+
+
+The `occstanhm_2()` function is one of two featured models in the occstanhm package.
+The function fits a two-level occupancy model with both correlated detection and occupancy probabilities.
+The model also allows for different coefficients across groups within the model, in contrast to the simpler models included within this package.
+For example, the demonstration in this file included different molecular markers or observers at the observation level.
+
+## Mathematical formulation
+
+The _Occupancy model formulations_ vignette includes the equations for this model.
+This may be accessed using `vignette("Occupancy model formulations", package = "occstanhm")`.
+
+## Explanation of algorithm
+
+There are two major parts to the model.
+First, the `reduce_sum()` function uses the `unit_loop_psi()` function to loop over unit-species combinations.
+This estimates a `logit_psi` for each unit-species combination and a `logit_p` for each observation at the y-level.
+This involves multiple slices and loops.
+
+* A loop goes over each unit-species combination (in parallel with up to one combination per CPU using the `reduce_sum()` function).
+* Within each unit-species combination, another loop goes over each revisit. This loop contains the `logit_psi`.
+* Within each revisit, a loop goes over each sample. This last loop is done so that coefficients can exist at the sample-level. This loop contains the `logit_p`.
+
+Second, the `logit_psi` and `logit_p` are mapped to their respective predictor coefficient matrices.
+These matrices have a row for each unit-species combination and are expanded by the `jj` vectors.
+A hyperparameter matrix exists as the priors for these matrices and allows for the correlations between coefficients to be estimated.
+When each coefficient is a species at a location, this coefficient is the correlation among species.
+
+The code also contains idiosyncrasies and other oddities to optimize and program in Stan, some of which are described in this paragraph.
+The slicing/indexing is complex because Stan requires the marginalization of discrete latent parameters and the reduce sum function also requires discrete groupings.
+The Cholesky decomposition for the prior requires the onion method because the default Stan method does not scale.
+Calculations are moved to the `transformed parameter` block whenever possible such as the use of `logit_psi_in` and `logit_p_in`.
+A prior is used on `logit_psi` and `logit_p` and priors are used on these prior to increase numerical stability.
+These programming methods were used based upon reading Stan documentation, the help forum (and asking questions on the help forum), and trial and error.
+
+
+## Stan implementation
+
+The model is implemented using Stan.
+Unlike some of the example models, this model allows for different predictor matrices.
+This comes with an increase in model complexity, especially for formatting data in R.
+Key parts of the the Stan model by code block include:
+
+* `functions`  
+  * A custom Cholesky factor function that uses the [onion method](https://discourse.mc-stan.org/t/using-the-onion-method-in-occupancy-model-hierarchical-model/24901)
+  * Custom occupancy model functions
+* `data`
+  * The number of unit-species combinations
+  * The number of total revisits across all unit-species combinations
+  * The total number of samples in the data
+  * A vector with the number of revisits per unit-species combination
+  * The number of samples per reach revisits
+  * The number of rows in the beta predictor matrix
+  * The number of rows in the delta predictor matrix
+  * The number of beta coefficients
+  * The number of delta coefficients
+  * The binary observation  status for each sample
+  * The binary observation status for each revisit
+  * A start-stop pair of indexing vectors for unit-species combinations at the observed (y) level. That is to say, this index takes the y data and slices it for each unit-species combination.
+  * A start-stop pair of indexing vectors revisits at the observed (y) level. That is to say, this index first gets indexed for each unit using the next index pair. Then, the the index is used to slice the observed (y) level data for each revisit.
+  * A start-stop pair of indexing vectors that slice data at the revisit (z_obs) level for each unit-revisit. For example, the `z_obs` data needs to be sliced for each unit-species combination. This vector does that slicing. The index pair also slices the previous index pair (**This is a necessary complexity for the Stan code**).
+  * A `jj` vector for psi that expands/maps each logit_psi to the prediction unit-species combination
+  * The psi predictor matrix
+  * The dimensions for the psi predictor matrix
+  * The hyperparameter predictor matrix that maps the beta coefficients to their hyperparameters
+  * The `jj` vector for p that expands/maps each logit_p to the predictor unit-species combination
+  * The p predictor matrix
+  * The dimensions for the p predictor matrix
+  * The priors for the psi hyper parameters (and dimensions) and also the Cholesky matrix prior, eta
+  * The priors for the p hyper parameters (and dimensions) and also the Cholesky matrix prior, eta
+  * The priors for the logit_psi and logit_p and the prior for this prior
+  * The grain size for the reduce_sum setting
+  
+
+```{r comment=''}
+#| echo: false
+system.file("./stan_models/occstanhm_2.stan", package = "occstanhm") |>
+  readLines() |>
+  cat(sep = "\n")
+```
+
+## Data formatting
+
+The model allows for multiple "observers" with subsampling and nomenclature can become confusing due to different possible designs and sources of replication.
+
+The highest level of replication are "units" such as lakes, habitat patches, or other locations.
+This may be resampled through different "subunits" such as locations within a lake, plots within a forest, or temporal revisits.
+Additionally, each subunit may be resampled through "samples".
+These samples may have subsamples, such as water grabs.
+
+## Example Application to multiple observers
+
+The `occstanhm_2()` function calls the `occstanhm_2.stan` model.
+Formatting data can be tricky with this model because of the multiple levels of indexing necessary for Stan code.
+The code for this example is included as its own file, but annotated with text here.
+For compiling this vignette, the source code file may be included from the file within the package (following along, you can either copy code from this file, or, open the source file.)
+
+```{r, echo=FALSE}
+system.file("./occstanhm_2_raw.R", package = "occstanhm") |>
+  knitr::read_chunk()
+```
+
+First, this package is loaded, as well as the Tidyverse (used for data wrangling and plotting) and ggthemes (used for colorblind friendly colors):
+
+```{r load_packages, eval=FALSE}
+```
+
+Next, data are simulated using the `sim_long_form_occ_2()` function that allows for correlated structures in the data.
+For example, perhaps several ponds are treated as the `unit` for this model and each pond is revisited through space or time, and sampling occurs during each revisit:
+
+```{r simulation, eval=FALSE}
+```
+
+The data also requires some additional formatting to create integers for input groups (Stan, unlike R, cannot work with characters and factors):
+
+```{r sim_format, eval=FALSE}
+```
+
+**Note:** The data and model fits have been precompiled and are included in the package.
+
+**Warning:** If you are running the code rather than using presimulated values, you will likely get different values. Although the random number generator seed has been set, this sometimes varies across machines and versions of R.
+
+If you prefer, you may use the presimulated data:
+
+```{r load_sim_data, eval=TRUE}
+```
+
+For a first plot, consider a single `unit` such as a pond or forest.
+This `unit` has multiple sampling events or a `revisit`.
+Each `revisit` has multiple samples taken from it.
+The raw data may be plotted from a single unit:
+
+```{r plot_one}
+```
+
+Plots for all of the simulated units may be included using a facet with ggplot2:
+
+```{r plot_data, fig.width=9,fig.height=9}
+```
+
+Next, the data needs to be formatted for Stan.
+Group the observation-level data by unit and species to calculate the `z_obs` and one of the index pairs:
+
+```{r summarize_stan_data_revisit_species}
+```
+
+This data frame may then be summarized a second time to obtain the number of revisits per unit and another index pair:
+
+```{r summarize_stan_data_revisit_species_2}
+```
+
+**Tip:** Go back and understand these index pairs from the past two data frames.
+These are important concepts to understand in order to understand how to slice and subset data for Stan. The index pairs provide insight how Stan loops over data.
+
+The data is also summarized at the level of the unit-species combination.
+This calculates the number of samples per unit-species combination, the last index pair, and an approximate estimation for $\psi$ that does not consider imperfect detection:
+```{r summarize_stan_data_unit_species}
+```
+
+The predictor matrix and hyperparameters for $\textbf{X}$ need to be created as well.
+The code includes a `_psi` to help these variables be easier to find and have more descriptive names:
+
+```{r x_psi_predictor}
+```
+
+Code also allows the user to check dimensions of input objects:
+```{r check_psi}
+```
+
+Priors are also specified for the beta hyperparameters:
+
+```{r beta_priors}
+```
+
+The dimension of these hyperparameters may also be checked:
+
+```{r check_beta_priors}
+```
+
+The dimensions for multiplication were difficult, and these can be checked.
+These are done separately because the code helped the authors debug and better understand the equations:
+
+```{r check_beta_star}
+
+```
+
+A predictor matrix may also be created for the p-level coefficients:
+
+```{r p_coef}
+```
+
+And these coefficients checked:
+
+```{r p_coef_check}
+```
+
+The hyperparameters may be created for the p-level:
+
+```{r p_hyper}
+```
+
+The dimensions of these parameters checked as well:
+
+```{r p_check_priors}
+```
+
+The objects may now be saved as a list for Stan:
+
+```{r save_as_stan}
+```
+
+***Note and warning:** The Stan outputs have been saved as part of the package.
+See later code blocks for examples loading this data.
+This model took approximately 5.5 hr to run on a 16-core instance and used about 8-12 CPUs for most of the run.
+
+```{r run_stan_model, eval=FALSE}
+```
+
+The fit summary also can take many computer resources and has been saved as part of the package (even using 15 cores, this code takes a few minutes to run):
+```{r fit_summary, eval=FALSE}
+```
+
+Or, you may load existing simulated outputs:
+
+```{r load_stan_outputs}
+fit <-
+  system.file("extdata/occstanhm_2_fit.rds", package = "occstanhm") |>
+  readRDS()
+
+fit_summary <-
+  system.file("extdata/occstanhm_2_fit_summary.rds", package = "occstanhm") |>
+  readRDS()
+```
+
+First, look at the Stan fit:
+
+```{r model_diag}
+```
+
+Next look at the default fit summary:
+
+```{r default_fit_summary}
+```
+
+Then sorted low to high:
+
+```{r default_fit_summary_1}
+```
+
+Then sorted high to low:
+
+```{ default_fit_summary_2}
+```
+
+The beta coefficients may be extracted for later plotting:
+
+```{r beta_coef, fig.width=6, fig.height=6}
+```
+
+And the beta coefficients plotted along with the simulated $\psi$ values (That do not account for imperfect detection):
+
+```{r beta_coef_plot, fig.width=6, fig.height=6}
+```
+
+Similar results may be extracted and formatted for the p-level of the model:
+
+```{r extract_p_coef}
+```
+
+And the p-level coefficients plotted:
+
+```{r delta_plot, fig.width=6,fig.height=6}
+```
+
+The estimated correlations may be examined:
+
+```{r est_corr}
+```
+
+and plotted:
+
+```{r plot_corr, fig.width=6, fig.height=6}
+```
+
+The priors, $\sigma_p$ and $\sigma_\psi$ may be examined (these parameters can be pathological):
+
+```{r est_sigmas}
+```
+
+Traceplots may also be displayed, such as the log probability:
+
+```{r trace_plot}
+```
+
+
