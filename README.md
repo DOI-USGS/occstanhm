@@ -86,7 +86,7 @@ This repository file contains the following files and folder:
 
 # User skill level
 
-This package expects a user to understand Bayesian Statistics and occupanyc models.
+This package expects a user to understand Bayesian Statistics and occupancy models.
 Users seeking to adapt code would also benfit from understanding programming in Stan.
 
 # Acknowledgments
