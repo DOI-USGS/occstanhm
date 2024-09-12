@@ -5,11 +5,8 @@ n_units_sim <- 2 # max is 26 due to number of letters
 n_species_sim <- 3
 
 n_revisits_per_site_in <- rpois(n_units_sim, 30)
-hist(n_revisits_per_site_in)
 
 n_samples_per_revisits <- rpois(sum(n_revisits_per_site_in), 20) + 1L
-hist(n_samples_per_revisits,
-     breaks = seq(0, 50, by = 1))
 
 ## species unit
 dat_species <-
@@ -17,9 +14,6 @@ dat_species <-
               species = paste("species", seq(1, n_species_sim))) |>
   mutate(psi_vec = rbeta(n(), 3, 3),
          theta_vec = rbeta(n(), 3, 3))
-
-dat_species |>
-  print(n = Inf)
 
 ## unit and revisit data
 dat_revisit <-
@@ -30,10 +24,7 @@ dat_revisit <-
   mutate(revisit_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
   ungroup() |>
-  select(unit, revisit_id)
-
-dat_revisit |>
-  print(n = Inf)
+  dplyr::select(unit, revisit_id)
 
 # sample
 dat_sample <-
@@ -47,7 +38,7 @@ dat_sample <-
   group_by(unit) |>
   mutate(sample_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
-  select(-index) |>
+  dplyr::select(-index) |>
   ungroup()
 
 # merge together
@@ -75,9 +66,6 @@ unit_species_summary <-
             n_revisits_per_site = n(),
             .groups = "keep") |>
   mutate(logit_psi = qlogis(psi_obs))
-
-unit_species_summary |>
-  print(n = Inf)
 
 revisit_species_summary <-
   dat |>
@@ -108,8 +96,6 @@ unit_species_revisit_summary <-
 
 # psi-level
 x_psi <- model.matrix(~ species - 1, unit_species_summary)
-x_psi |> head()
-x_psi |> dim()
 
 unit_species_summary_hyper <-
   unit_species_summary |>
@@ -128,9 +114,6 @@ beta_psi_star_prior <-
 
 # theta-level
 w_theta <- model.matrix(~ species - 1, unit_species_summary)
-w_theta
-w_theta |> head()
-w_theta |> dim()
 
 w_theta_star <-
   model.matrix(~ 1, unit_species_summary_hyper)

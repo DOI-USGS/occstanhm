@@ -1,0 +1,83 @@
+model{
+
+  # community priors for occupancy covariates
+  for(m in 1:Vocc) {
+    mu.u.b[m] ~ dnorm(0, 0.01)T(-10,10)
+    tau.u.b[m] <- pow(sigma.u.b[m], -2)
+    sigma.u.b[m] ~ dunif(0, 10)
+  }
+
+  # community priors for detection covariates
+  for(m in 1:Vobs) {
+    mu.v.b[m] ~ dnorm(0, 0.01)T(-10,10)
+    tau.v.b[m] <- pow(sigma.v.b[m], -2)
+    sigma.v.b[m] ~ dunif(0, 10)
+  }
+
+  # Latent variables
+  for(j in 1:J) {
+        for(l in 1:nlv){
+              LV[j,l] ~ dnorm(0,1)
+        }
+  }
+
+  # Latent variable coefficients with constraints
+  # diagonal elements positive, upper diagonal 0
+  for(l in 1:(nlv-1)){
+        for(l2 in (l+1):nlv){
+             lv.coef[l,l2] <- 0
+        }
+  }
+
+   # Sign constraints on diagonal elements
+   for(l in 1:nlv) {
+         lv.coef[l,l]  ~ dunif(0,1) 
+   }
+
+  # lower diagonal free
+  for(l in 2:nlv){
+        for(l2 in 1:(l-1)){
+             lv.coef[l,l2] ~ dunif(-1,1)
+        }
+  }
+
+  # other elements free
+  for(i in (nlv+1):n) {
+        for(l in 1:nlv){
+              lv.coef[i,l] ~ dunif(-1,1)
+        }
+  }
+
+  # loop over all species
+  for (i in 1:(n)) {
+
+
+    # random effects for occupancy
+    for(m in 1:Vocc) {
+      u.b[i, m] ~ dnorm(mu.u.b[m], tau.u.b[m])T(-10,10)
+    }
+
+    # random effects for detection
+    for(m in 1:Vobs) {
+      v.b[i, m] ~ dnorm(mu.v.b[m], tau.v.b[m])T(-10,10)
+    }
+    
+    # loop over all sites
+    for (j in 1:J) {
+
+      # probit model for occupancy
+      eta[j,i] <-  inprod(u.b[i, ], Xocc[j, ]) + inprod(lv.coef[i,],LV[j, ])
+      # draw from normal, constrain variance to 1
+      u[j,i] ~ dnorm(eta[j,i],1/(1-sum(lv.coef[i,1:nlv]^2))) 
+      z[j,i] <- step(u[j,i])
+      
+      # logistic model for detection
+      logit(p[j,i]) <-   inprod(v.b[i, ], Xobs[j, ])
+      mu.p[j,i] <- p[j,i]*z[j,i]
+      y[j,i] ~ dbin(mu.p[j,i],k[j])
+
+   }
+  }
+
+}
+

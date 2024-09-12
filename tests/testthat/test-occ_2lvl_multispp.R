@@ -23,7 +23,7 @@ dat_revisit <-
   mutate(revisit_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
   ungroup() |>
-  select(unit, revisit_id)
+  dplyr::select(unit, revisit_id)
 
 # sample
 dat_sample <-
@@ -39,7 +39,7 @@ dat_sample <-
   group_by(unit) |>
   mutate(sample_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
-  select(-index) |>
+  dplyr::select(-index) |>
   ungroup()
 
 # merge together
@@ -144,3 +144,4 @@ suppressMessages({
 test_that("occ_2lvl_multispp produces a  cmdstan fit", {
   expect_s3_class(fit, c("CmdStanMCMC", "CmdStanFit", "R6"))
 })
+

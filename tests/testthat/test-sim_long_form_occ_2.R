@@ -38,3 +38,4 @@ test_that("sigam_corr_psi is correct", {
   expect_equal(dim(example_sim$sigma_corr_psi$unit_obs_spp),
                c(n_units * n_spp, 4))
 })
+

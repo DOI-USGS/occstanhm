@@ -137,7 +137,6 @@ stan_data <-
     unit_revisit_start = unit_revisit_summary |> pull(unit_revisit_start),
     unit_revisit_stop = unit_revisit_summary |> pull(unit_revisit_stop),
     n_revisits_per_unit = unit_revisit_summary |> pull(n_revisits_per_unit),
-    n_revisits_per_unit = unit_summary |> pull(n_revisits_per_unit),
     n_units = unit_summary |> nrow(),
     grainsize = 1
   )

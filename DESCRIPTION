@@ -14,7 +14,7 @@ Description: occstanhm fits occupancy models (occ) using the Stan language
 License: unlicense
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.1
+RoxygenNote: 7.3.2
 Imports:
     tibble,
     dplyr,
@@ -23,5 +23,12 @@ Imports:
     corrplot,
     mvtnorm
 Suggests: 
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    tidyverse,
+    GGally,
+    R2jags,
+    occstanhm,
+    MCMCpack,
+    mclust,
+    corrplot
 Config/testthat/edition: 3

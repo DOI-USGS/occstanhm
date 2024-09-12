@@ -21,12 +21,14 @@ The Tobler et al. (2019; https://doi.org/10.1002/ecy.2754) code is not run and r
 
 This example model also shows how to add non-hierarchical coefficients to a model in Stan.
 
+The Stan model should be run more, but is not by default to reduce compile time.
+
 ```{r, echo=FALSE}
-system.file("./compare_Tobler/compare_and_save.R", package = "occstanhm") |>
+system.file("./extdata/compare_and_save.R", package = "occstanhm") |>
   knitr::read_chunk()
 ```
 
-```{r}
+```{r}t
 knitr::opts_chunk$set(eval = FALSE)
 ```
 
@@ -86,11 +88,15 @@ And then the Tobler et al. model run and post-processing done for both outputs:
 ```{r run_tobler}
 ```
 
-## Lastly, the outputs may be compared and saved
+## Lastly, the outputs may be compared
 
+First, format JAGS outputs and merge with Stan outputs
 ```{r compare_outputs}
 ```
 
+Then, compare the correlations
 
-
+```{r compare_cor}
 ```
+
+

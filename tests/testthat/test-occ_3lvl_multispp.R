@@ -25,7 +25,7 @@ dat_revisit <-
   mutate(revisit_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
   ungroup() |>
-  select(unit, revisit_id)
+  dplyr::select(unit, revisit_id)
 
 # sample
 dat_sample <-
@@ -39,7 +39,7 @@ dat_sample <-
   group_by(unit) |>
   mutate(sample_id = dplyr::cur_group_rows() -
            min(dplyr::cur_group_rows()) + 1L) |>
-  select(-index) |>
+  dplyr::select(-index) |>
   ungroup()
 
 dat <-

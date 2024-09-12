@@ -94,6 +94,8 @@ stan_data <-
        n_units_species = unit_species_summary |> nrow(),
        unit_start = unit_species_summary |> dplyr::pull(unit_species_start),
        unit_stop = unit_species_summary |> dplyr::pull(unit_species_stop),
+       n_revisits_per_unit = unit_species_summary |>
+                                dplyr::pull(n_revisits_per_site),
        x_psi = x_psi,
        m_beta = x_psi |> ncol(),
        n_units = 3,

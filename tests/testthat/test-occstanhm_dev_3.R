@@ -61,7 +61,7 @@ theta_obs <-
   summarize(n = n(), z = mean(z), theta_obs = mean(a),
             .groups = "drop") |>
   filter(z > 0) |>
-  select(unit, subunit_species, subunit, species, n, z, theta, theta_obs)
+  dplyr::select(unit, subunit_species, subunit, species, n, z, theta, theta_obs)
 
 # Create/simulate full data set
 # Arranged by unit, species, and then subunit
@@ -72,11 +72,11 @@ dat <-
               plain_marker = paste("M", seq(1, n_markers))) |>
   mutate(marker = paste(species, plain_marker, sep = "-"),
          unit_id = as.integer(factor(unit))) |>
-  select(-plain_marker) |>
+#  select(-plain_marker) |>
   mutate(p = rbeta(n(), 3, 3)) |>
   full_join(dat_sample, by = c("unit", "species"),
             relationship = "many-to-many") |>
-  select(unit_id, unit, subunit, species, marker, z, a, p) |>
+#  select(unit_id, unit, subunit, species, marker, z, a, p) |>
   mutate(subunit_species = paste(subunit, species, sep = "-"),
          k_subsamples = n_subsamples,
          y = a * rbinom(n(), k_subsamples, prob = p),
