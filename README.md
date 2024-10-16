@@ -6,8 +6,8 @@
 #### Year of Origin:   2024 (original publication)
 #### Year of Version:  2024
 #### Version:          2.0.0 
-#### Digital Object Identifier (DOI): XXXXXX
-#### USGS Information Product Data System (IPDS) no.: IP-XXXXX (internal agency tracking)
+#### Digital Object Identifier (DOI): 10.5066/P13FNZOF
+#### USGS Information Product Data System (IPDS) no.: IP-170402 (internal agency tracking)
 
 ***
 
@@ -18,7 +18,7 @@ Erickson, RA, and Labuzzetta, CJ.
 `occstanhm`: Hierarchical occupancy models with correlated error structure.
 U.S. Geological Survey software release.
 Reston, Va.
-https://doi.org/10.5066/XXXXXXX.
+https://doi.org/10.5066/10.5066/P13FNZOF.
 
 _Authors' [ORCID](https://orcid.org) nos.:_
 
