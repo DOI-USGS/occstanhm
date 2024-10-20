@@ -137,7 +137,7 @@ The code for this example is included as its own file, but annotated with text h
 For compiling this vignette, the source code file may be included from the file within the package (following along, you can either copy code from this file or open the source file).
 
 ```{r, echo=FALSE}
-system.file("./occstanhm_3_raw.R", package = "occstanhm") |>
+system.file("./simulate_code/occstanhm_3_raw.R", package = "occstanhm") |>
   knitr::read_chunk()
 ```
 
@@ -311,7 +311,7 @@ Then sorted low to high:
 
 Then sorted high to low:
 
-```{ default_fit_summary_2}
+```{r default_fit_summary_2}
 ```
 
 The beta coefficients may be extracted for later plotting:

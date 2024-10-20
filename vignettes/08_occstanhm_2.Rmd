@@ -128,7 +128,7 @@ The code for this example is included as its own file, but annotated with text h
 For compiling this vignette, the source code file may be included from the file within the package (following along, you can either copy code from this file, or, open the source file.)
 
 ```{r, echo=FALSE}
-system.file("./occstanhm_2_raw.R", package = "occstanhm") |>
+system.file("./simulate_code/occstanhm_2_raw.R", package = "occstanhm") |>
   knitr::read_chunk()
 ```
 
